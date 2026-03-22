@@ -89,7 +89,7 @@ const AIRateLimitStripComponent = memo(() => {
         return (
             <div>
                 <div className="bg-yellow-900/30 border-b border-yellow-700/50 px-2 py-1.5 flex items-center gap-1 text-[11px] text-yellow-200">
-                    <i className="fa fa-sparkles text-yellow-400"></i>
+                    <i className="fa fa-wand-magic-sparkles text-yellow-400"></i>
                     <span>
                         {preqlimit - preq}/{preqlimit} Premium Used
                     </span>

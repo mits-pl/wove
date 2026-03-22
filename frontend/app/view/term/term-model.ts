@@ -407,7 +407,7 @@ export class TermViewModel implements ViewModel {
         if (shellIntegrationStatus == null) {
             return {
                 elemtype: "iconbutton",
-                icon: "sparkles",
+                icon: "wand-magic-sparkles",
                 className: "text-muted",
                 title: "No shell integration — Wove AI unable to run commands.",
                 noAction: true,
@@ -416,7 +416,7 @@ export class TermViewModel implements ViewModel {
         if (shellIntegrationStatus === "ready") {
             return {
                 elemtype: "iconbutton",
-                icon: "sparkles",
+                icon: "wand-magic-sparkles",
                 className: "text-accent",
                 title: "Shell ready — Wove AI can run commands in this terminal.",
                 noAction: true,
@@ -436,7 +436,7 @@ export class TermViewModel implements ViewModel {
 
             return {
                 elemtype: "iconbutton",
-                icon: "sparkles",
+                icon: "wand-magic-sparkles",
                 className: "text-warning",
                 title: title,
                 noAction: true,

@@ -34,7 +34,7 @@ const AIModeMenuItem = memo(({ config, isSelected, isDisabled, isPremiumDisabled
             )}
         >
             <div className="flex items-center gap-2 w-full">
-                <i className={makeIconClass(config["display:icon"] || "sparkles", false)}></i>
+                <i className={makeIconClass(config["display:icon"] || "wand-magic-sparkles", false)}></i>
                 <span className={cn("text-sm", isSelected && "font-bold")}>
                     {getModeDisplayName(config)}
                     {isPremiumDisabled && " (premium)"}
@@ -183,7 +183,7 @@ export const AIModeDropdown = memo(({ compatibilityMode = false }: AIModeDropdow
 
     const displayConfig = aiModeConfigs[currentMode];
     const displayName = displayConfig ? getModeDisplayName(displayConfig) : `Invalid (${currentMode})`;
-    const displayIcon = displayConfig ? displayConfig["display:icon"] || "sparkles" : "question";
+    const displayIcon = displayConfig ? displayConfig["display:icon"] || "wand-magic-sparkles" : "question";
     const resolvedConfig = waveaiModeConfigs[currentMode];
     const hasToolsSupport = resolvedConfig && resolvedConfig["ai:capabilities"]?.includes("tools");
     const showNoToolsWarning = widgetContextEnabled && resolvedConfig && !hasToolsSupport;

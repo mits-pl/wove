@@ -301,7 +301,7 @@ const AIToolUse = memo(({ part, isStreaming }: AIToolUseProps) => {
         highlightedBlockIdRef.current = toolData.blockid;
         BlockModel.getInstance().setBlockHighlight({
             blockId: toolData.blockid,
-            icon: "sparkles",
+            icon: "wand-magic-sparkles",
         });
 
         highlightTimeoutRef.current = setTimeout(() => {

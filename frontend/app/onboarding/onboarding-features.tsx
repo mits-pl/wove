@@ -49,7 +49,7 @@ export const WaveAIPage = ({ onNext, onSkip }: { onNext: () => void; onSkip: () 
                 <div className="flex-1 flex flex-col items-center justify-center gap-8 pr-6 unselectable">
                     <div className="flex flex-col items-start gap-6 max-w-md">
                         <div className="flex h-[52px] px-3 items-center rounded-lg bg-hover text-accent text-[24px]">
-                            <i className="fa fa-sparkles" />
+                            <i className="fa fa-wand-magic-sparkles" />
                             <span className="font-bold ml-2 font-mono">AI</span>
                         </div>
 
@@ -60,11 +60,11 @@ export const WaveAIPage = ({ onNext, onSkip }: { onNext: () => void; onSkip: () 
                             </p>
 
                             <div className="flex items-start gap-3 w-full">
-                                <i className="fa fa-sparkles text-accent text-lg mt-1 flex-shrink-0" />
+                                <i className="fa fa-wand-magic-sparkles text-accent text-lg mt-1 flex-shrink-0" />
                                 <p>
                                     Toggle the Wove AI panel with the{" "}
                                     <span className="inline-flex h-[26px] px-1.5 items-center rounded-md box-border bg-hover text-accent text-[12px] align-middle">
-                                        <i className="fa fa-sparkles" />
+                                        <i className="fa fa-wand-magic-sparkles" />
                                         <span className="font-bold ml-1 font-mono">AI</span>
                                     </span>{" "}
                                     button in the header (top left)

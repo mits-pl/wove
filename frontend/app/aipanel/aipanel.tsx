@@ -95,7 +95,7 @@ const AIWelcomeMessage = memo(() => {
     return (
         <div className="text-secondary py-8">
             <div className="text-center">
-                <i className="fa fa-sparkles text-4xl text-accent mb-2 block"></i>
+                <i className="fa fa-wand-magic-sparkles text-4xl text-accent mb-2 block"></i>
                 <p className="text-lg font-bold text-primary">Welcome to Wove AI</p>
             </div>
             <div className="mt-4 text-left max-w-md mx-auto">
@@ -188,7 +188,7 @@ const AIBuilderWelcomeMessage = memo(() => {
     return (
         <div className="text-secondary py-8">
             <div className="text-center">
-                <i className="fa fa-sparkles text-4xl text-accent mb-4 block"></i>
+                <i className="fa fa-wand-magic-sparkles text-4xl text-accent mb-4 block"></i>
                 <p className="text-lg font-bold text-primary">WaveApp Builder</p>
             </div>
             <div className="mt-4 text-left max-w-md mx-auto">

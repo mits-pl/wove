@@ -41,7 +41,7 @@ const VTabBarAIButton = memo(() => {
             divStyle={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
             divOnClick={onClick}
         >
-            <i className="fa fa-sparkles" />
+            <i className="fa fa-wand-magic-sparkles" />
         </Tooltip>
     );
 });

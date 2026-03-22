@@ -71,7 +71,7 @@ export const AIPanelHeader = memo(() => {
             onContextMenu={handleContextMenu}
         >
             <h2 className="text-white text-sm @xs:text-lg font-semibold flex items-center gap-2 flex-shrink-0 whitespace-nowrap">
-                <i className="fa fa-sparkles text-accent"></i>
+                <i className="fa fa-wand-magic-sparkles text-accent"></i>
                 Wove AI
             </h2>
 

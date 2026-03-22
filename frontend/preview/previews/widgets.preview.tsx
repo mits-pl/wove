@@ -60,7 +60,7 @@ const mockWidgets: { [key: string]: WidgetConfigType } = {
         blockdef: { meta: { view: "web", url: "https://waveterm.dev" } },
     },
     "defwidget@ai": {
-        icon: "sparkles",
+        icon: "wand-magic-sparkles",
         color: "#a78bfa",
         label: "AI",
         description: "Open Wove AI",

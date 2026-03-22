@@ -42,7 +42,7 @@ const UpgradeOnboardingModal_v0_13_1_Content = () => {
 
             <div className="flex w-full items-start gap-4">
                 <div className="flex-shrink-0">
-                    <i className="text-[24px] text-accent fa-solid fa-sparkles"></i>
+                    <i className="text-[24px] text-accent fa-solid fa-wand-magic-sparkles"></i>
                 </div>
                 <div className="flex flex-col items-start gap-2 flex-1">
                     <div className="text-foreground text-base font-semibold leading-[18px]">Wove AI Updates</div>

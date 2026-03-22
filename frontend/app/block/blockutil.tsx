@@ -23,7 +23,7 @@ export function blockViewToIcon(view: string): string {
         return "globe";
     }
     if (view == "waveai") {
-        return "sparkles";
+        return "wand-magic-sparkles";
     }
     if (view == "help") {
         return "circle-question";

@@ -103,7 +103,7 @@ export class WaveAiModel implements ViewModel {
         this.cancel = false;
         this.viewType = "waveai";
         this.blockAtom = WOS.getWaveObjectAtom<Block>(`block:${blockId}`);
-        this.viewIcon = atom("sparkles");
+        this.viewIcon = atom("wand-magic-sparkles");
         this.viewName = atom("Wove AI");
         this.messagesAtom = atom([]);
         this.messagesSplitAtom = splitAtom(this.messagesAtom);
@@ -484,7 +484,7 @@ const ChatItem = ({ chatItemAtom, model }: ChatItemProps) => {
                 <>
                     <div className="chat-msg chat-msg-header">
                         <div className="icon-box">
-                            <i className="fa-sharp fa-solid fa-sparkles"></i>
+                            <i className="fa-sharp fa-solid fa-wand-magic-sparkles"></i>
                         </div>
                     </div>
                     <div className="chat-msg chat-msg-assistant">
@@ -499,7 +499,7 @@ const ChatItem = ({ chatItemAtom, model }: ChatItemProps) => {
             ) : (
                 <>
                     <div className="chat-msg-header">
-                        <i className="fa-sharp fa-solid fa-sparkles"></i>
+                        <i className="fa-sharp fa-solid fa-wand-magic-sparkles"></i>
                     </div>
                     <TypingIndicator className="chat-msg typing-indicator" />
                 </>

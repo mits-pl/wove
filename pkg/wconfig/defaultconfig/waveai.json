@@ -15,7 +15,7 @@
     "waveai@balanced": {
         "display:name": "Balanced",
         "display:order": -2,
-        "display:icon": "sparkles",
+        "display:icon": "wand-magic-sparkles",
         "display:description": "Good mix of speed and accuracy\n(gpt-5.1 with minimal thinking)",
         "ai:provider": "wave",
         "ai:apitype": "openai-responses",
@@ -81,7 +81,7 @@
     "byok@gpt5": {
         "display:name": "GPT-5.1",
         "display:order": 21,
-        "display:icon": "sparkles",
+        "display:icon": "wand-magic-sparkles",
         "display:description": "OpenAI GPT-5.1 (BYOK)\nMost capable OpenAI model",
         "ai:provider": "openai",
         "ai:apitype": "openai-responses",

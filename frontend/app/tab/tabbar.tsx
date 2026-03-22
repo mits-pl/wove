@@ -69,7 +69,7 @@ const WaveAIButton = memo(({ divRef }: { divRef?: React.RefObject<HTMLDivElement
             divOnClick={onClick}
             divRef={divRef}
         >
-            <i className="fa fa-sparkles" />
+            <i className="fa fa-wand-magic-sparkles" />
         </Tooltip>
     );
 });

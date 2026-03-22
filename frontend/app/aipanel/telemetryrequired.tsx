@@ -33,7 +33,7 @@ const TelemetryRequiredMessage = ({ className }: TelemetryRequiredMessageProps) 
             <div className="flex items-center justify-center p-8 text-center">
                 <div className="max-w-md space-y-6">
                     <div className="space-y-4">
-                        <i className="fa fa-sparkles text-accent text-5xl"></i>
+                        <i className="fa fa-wand-magic-sparkles text-accent text-5xl"></i>
                         <h2 className="text-2xl font-semibold text-foreground">Wove AI</h2>
                         <p className="text-secondary leading-relaxed">
                             Wove AI is free to use and provides integrated AI chat that can interact with your widgets,

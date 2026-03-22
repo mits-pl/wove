@@ -40,7 +40,7 @@ const UpgradeMinorWelcomePage = ({ onStarClick, onAlreadyStarred, onMaybeLater }
                     <div className="flex flex-col items-center gap-4">
                         <div className="flex flex-row gap-4 items-center">
                             <div className="flex h-[52px] px-3 items-center rounded-lg bg-hover text-accent text-[24px]">
-                                <i className="fa fa-sparkles" />
+                                <i className="fa fa-wand-magic-sparkles" />
                                 <span className="font-bold ml-2 font-mono">Wove AI</span>
                             </div>
                             <div className="flex h-[52px] px-3 items-center rounded-lg bg-hover text-[18px]">
