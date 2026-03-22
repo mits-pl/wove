@@ -100,8 +100,7 @@ const AIWelcomeMessage = memo(() => {
             </div>
             <div className="mt-4 text-left max-w-md mx-auto">
                 <p className="text-sm mb-6">
-                    Wove AI is your terminal assistant with context. I can read your terminal output, analyze widgets,
-                    access files, and help you solve problems faster.
+                    Your AI development environment. I read your project conventions, query your database, write and test code, and follow your team's coding standards — all from the terminal.
                 </p>
                 <div className="bg-accent/10 border border-accent/30 rounded-lg p-4">
                     <div className="text-sm font-semibold mb-3 text-accent">Getting Started:</div>
