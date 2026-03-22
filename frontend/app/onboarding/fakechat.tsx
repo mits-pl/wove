@@ -204,7 +204,7 @@ const FakeAIPanelHeader = memo(() => {
         <div className="py-2 pl-3 pr-1 border-b border-gray-600 flex items-center justify-between min-w-0 bg-zinc-900">
             <h2 className="text-white text-sm font-semibold flex items-center gap-2 flex-shrink-0 whitespace-nowrap">
                 <i className="fa fa-sparkles text-accent"></i>
-                Wave AI
+                Wove AI
             </h2>
 
             <div className="flex items-center flex-shrink-0 whitespace-nowrap">

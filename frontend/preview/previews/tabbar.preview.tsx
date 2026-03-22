@@ -108,7 +108,7 @@ function TabBarPreviewInner({ platform, setPlatform }: TabBarPreviewInnerProps) 
                         onChange={(event) => setHideAiButton(event.target.checked)}
                         className="cursor-pointer"
                     />
-                    Hide Wave AI button
+                    Hide Wove AI button
                 </label>
                 <label className="flex items-center gap-2 text-xs text-muted">
                     <input

@@ -96,11 +96,11 @@ const AIWelcomeMessage = memo(() => {
         <div className="text-secondary py-8">
             <div className="text-center">
                 <i className="fa fa-sparkles text-4xl text-accent mb-2 block"></i>
-                <p className="text-lg font-bold text-primary">Welcome to Wave AI</p>
+                <p className="text-lg font-bold text-primary">Welcome to Wove AI</p>
             </div>
             <div className="mt-4 text-left max-w-md mx-auto">
                 <p className="text-sm mb-6">
-                    Wave AI is your terminal assistant with context. I can read your terminal output, analyze widgets,
+                    Wove AI is your terminal assistant with context. I can read your terminal output, analyze widgets,
                     access files, and help you solve problems faster.
                 </p>
                 <div className="bg-accent/10 border border-accent/30 rounded-lg p-4">
@@ -540,7 +540,7 @@ const AIPanelComponentInner = memo(({ roundTopLeft }: AIPanelComponentInnerProps
 
     const handleFocusCapture = useCallback(
         (_event: React.FocusEvent) => {
-            // console.log("Wave AI focus capture", getElemAsStr(event.target));
+            // console.log("Wove AI focus capture", getElemAsStr(event.target));
             model.requestWaveAIFocus();
         },
         [model]

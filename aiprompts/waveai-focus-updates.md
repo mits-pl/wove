@@ -1,18 +1,18 @@
-# Wave Terminal Focus System - Wave AI Integration
+# Wave Terminal Focus System - Wove AI Integration
 
 ## Problem
 
-Wave AI focus handling is fragile compared to blocks:
+Wove AI focus handling is fragile compared to blocks:
 
 1. Only watches textarea focus/blur, missing the multi-phase handling that blocks have
 2. Selection handling breaks - selecting text causes blur → focus reverts to layout
-3. Focus ring flashing - clicking Wave AI briefly shows focus ring on layout
-4. Window blur sensitivity - `window.blur()` incorrectly assumes user wants to leave Wave AI
+3. Focus ring flashing - clicking Wove AI briefly shows focus ring on layout
+4. Window blur sensitivity - `window.blur()` incorrectly assumes user wants to leave Wove AI
 5. No capture phase - missing the immediate visual feedback that blocks get
 
 ## Solution Overview
 
-Extend the block focus system pattern to Wave AI:
+Extend the block focus system pattern to Wove AI:
 
 - Multi-phase handling (capture + click)
 - Selection protection
@@ -26,7 +26,7 @@ graph TB
     User[User Interaction]
     FM[Focus Manager]
     Layout[Layout System]
-    WaveAI[Wave AI Panel]
+    WaveAI[Wove AI Panel]
 
     User -->|click/key| FM
     FM -->|node focus| Layout
@@ -56,8 +56,8 @@ class FocusManager {
   nodeFocusWithin(): boolean;
 
   // NEW: Focus transitions (INTENTIONALLY not defensive)
-  requestNodeFocus(): void; // from Wave AI → node (BREAKS selections - that's the point!)
-  requestWaveAIFocus(): void; // from node → Wave AI
+  requestNodeFocus(): void; // from Wove AI → node (BREAKS selections - that's the point!)
+  requestWaveAIFocus(): void; // from node → Wove AI
 
   // NEW: Get current focus type
   getFocusType(): FocusStrType;
@@ -69,20 +69,20 @@ class FocusManager {
 
 **Critical Design Decision: `requestNodeFocus()` is NOT defensive**
 
-When `requestNodeFocus()` is called (e.g., Cmd+n, explicit focus change), it MUST take focus even if there's a selection in Wave AI. This is intentional - the user explicitly requested a focus change. Losing the selection is the correct behavior.
+When `requestNodeFocus()` is called (e.g., Cmd+n, explicit focus change), it MUST take focus even if there's a selection in Wove AI. This is intentional - the user explicitly requested a focus change. Losing the selection is the correct behavior.
 
 **Focus Manager as Source of Truth**
 
 The `focusType` atom is the single source of truth. The old `waveAIFocusedAtom` will be kept in sync during migration but should eventually be removed. All components should read `focusManager.focusType` directly (via `useAtomValue`) to determine focus ring state - this ensures synchronized, reactive focus ring updates.
 
-## Wave AI Focus Utilities
+## Wove AI Focus Utilities
 
 **New File**: [`frontend/app/aipanel/waveai-focus-utils.ts`](frontend/app/aipanel/waveai-focus-utils.ts)
 
-Similar to [`focusutil.ts`](frontend/util/focusutil.ts) but for Wave AI:
+Similar to [`focusutil.ts`](frontend/util/focusutil.ts) but for Wove AI:
 
 ```typescript
-// Find if element is within Wave AI panel
+// Find if element is within Wove AI panel
 export function findWaveAIPanel(element: HTMLElement): HTMLElement | null {
   let current: HTMLElement = element;
   while (current) {
@@ -94,16 +94,16 @@ export function findWaveAIPanel(element: HTMLElement): HTMLElement | null {
   return null;
 }
 
-// Check if Wave AI panel has focus or selection (like focusedBlockId())
+// Check if Wove AI panel has focus or selection (like focusedBlockId())
 export function waveAIHasFocusWithin(): boolean {
-  // Check if activeElement is within Wave AI panel
+  // Check if activeElement is within Wove AI panel
   const focused = document.activeElement;
   if (focused instanceof HTMLElement) {
     const waveAIPanel = findWaveAIPanel(focused);
     if (waveAIPanel) return true;
   }
 
-  // Check if selection is within Wave AI panel
+  // Check if selection is within Wove AI panel
   const sel = document.getSelection();
   if (sel && sel.anchorNode && sel.rangeCount > 0 && !sel.isCollapsed) {
     let anchor = sel.anchorNode;
@@ -119,7 +119,7 @@ export function waveAIHasFocusWithin(): boolean {
   return false;
 }
 
-// Check if there's an active selection in Wave AI
+// Check if there's an active selection in Wove AI
 export function waveAIHasSelection(): boolean {
   const sel = document.getSelection();
   if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
@@ -138,7 +138,7 @@ export function waveAIHasSelection(): boolean {
 }
 ```
 
-## Wave AI Panel Integration
+## Wove AI Panel Integration
 
 **File**: [`frontend/app/aipanel/aipanel.tsx`](frontend/app/aipanel/aipanel.tsx)
 
@@ -147,7 +147,7 @@ Add capture phase and selection protection:
 ```typescript
 // ADD: Capture phase handler (like blocks)
 const handleFocusCapture = useCallback((event: React.FocusEvent) => {
-    console.log("Wave AI focus capture", getElemAsStr(event.target));
+    console.log("Wove AI focus capture", getElemAsStr(event.target));
     focusManager.requestWaveAIFocus();  // Sets visual state immediately
 }, []);
 
@@ -186,7 +186,7 @@ const handleClick = (e: React.MouseEvent) => {
 >
 ```
 
-## Wave AI Input Focus Handling
+## Wove AI Input Focus Handling
 
 **File**: [`frontend/app/aipanel/aipanelinput.tsx`](frontend/app/aipanel/aipanelinput.tsx)
 
@@ -205,20 +205,20 @@ const handleBlur = useCallback((e: React.FocusEvent) => {
     return;
   }
 
-  // Still within Wave AI (focus or selection) - don't revert
+  // Still within Wove AI (focus or selection) - don't revert
   if (waveAIHasFocusWithin()) {
     return;
   }
 
-  // Focus truly leaving Wave AI, revert to node focus
+  // Focus truly leaving Wove AI, revert to node focus
   focusManager.requestNodeFocus();
 }, []);
 ```
 
 **Note:** `waveAIHasFocusWithin()` checks both:
 
-1. If `relatedTarget` is within Wave AI panel (handles context menus, buttons)
-2. If there's an active selection in Wave AI (handles text selection clicks)
+1. If `relatedTarget` is within Wove AI panel (handles context menus, buttons)
+2. If there's an active selection in Wove AI (handles text selection clicks)
 
 This combines both checks from the original implementation into a single utility call.
 
@@ -256,7 +256,7 @@ The focus manager update happens automatically in the treeReducer for all focus-
 
 **File**: [`frontend/layout/lib/layoutModel.ts`](frontend/layout/lib/layoutModel.ts)
 
-The `isFocused` atom already checks Wave AI state:
+The `isFocused` atom already checks Wove AI state:
 
 ```typescript
 isFocused: atom((get) => {
@@ -284,7 +284,7 @@ This single change coordinates the entire system:
 - The reactive chain runs normally
 - But `isFocused` returns `false` if focus manager says "waveai"
 - Block's two-step effect doesn't run
-- Physical DOM focus stays with Wave AI
+- Physical DOM focus stays with Wove AI
 
 ## Layout Focus Coordination
 
@@ -298,7 +298,7 @@ treeReducer(action: LayoutTreeAction, setState = true): boolean {
   switch (action.type) {
     case LayoutTreeActionType.InsertNode:
       insertNode(this.treeState, action);
-      // If inserting with focus, claim focus from Wave AI
+      // If inserting with focus, claim focus from Wove AI
       if ((action as LayoutTreeInsertNodeAction).focused) {
         focusManager.requestNodeFocus();
       }
@@ -386,7 +386,7 @@ function switchBlockInDirection(tabId: string, direction: NavigateDirection) {
     }
   }
 
-  // For right navigation, switch from Wave AI to blocks
+  // For right navigation, switch from Wove AI to blocks
   if (direction === NavigateDirection.Right && focusType === "waveai") {
     focusManager.requestNodeFocus();
     return;
@@ -443,10 +443,10 @@ Physical DOM focus granted ✓
 - `relatedTarget` is null → detected as window blur
 - Focus state preserved
 
-### 2. Selection in Wave AI
+### 2. Selection in Wove AI
 
 - User selects text
-- Clicks elsewhere in Wave AI
+- Clicks elsewhere in Wove AI
 - `waveAIHasSelection()` returns true
 - Only visual focus updates, no DOM focus change
 - Selection preserved
@@ -454,7 +454,7 @@ Physical DOM focus granted ✓
 ### 3. Copy/Paste Context Menu
 
 - Right-click causes blur
-- `relatedTarget` within Wave AI panel
+- `relatedTarget` within Wove AI panel
 - `handleBlur` detects this, doesn't revert focus
 
 ### 4. Modal Dialogs
@@ -469,11 +469,11 @@ Physical DOM focus granted ✓
 
 - Implement enhanced `focusManager.ts` with new methods
 - Create `waveai-focus-utils.ts` with selection utilities
-- Add data attributes to Wave AI panel
+- Add data attributes to Wove AI panel
 
-### 2. Wave AI Integration
+### 2. Wove AI Integration
 
-- Add `onFocusCapture` to Wave AI panel
+- Add `onFocusCapture` to Wove AI panel
 - Update `handleBlur` with simplified `waveAIHasFocusWithin()` check
 - Update `handleClick` with selection awareness
 - Components read `focusManager.focusType` directly via `useAtomValue` for focus ring display
@@ -495,7 +495,7 @@ Physical DOM focus granted ✓
 
 ### New Files
 
-- `frontend/app/aipanel/waveai-focus-utils.ts` - Focus utilities for Wave AI
+- `frontend/app/aipanel/waveai-focus-utils.ts` - Focus utilities for Wove AI
 
 ### Modified Files
 
@@ -507,18 +507,18 @@ Physical DOM focus granted ✓
 
 ## Testing Checklist
 
-- [ ] Select text in Wave AI, click elsewhere in Wave AI → selection preserved
-- [ ] Click Wave AI panel (not input) → focus moves to Wave AI
-- [ ] Click block while in Wave AI (no selection) → focus moves to block
-- [ ] Press Left arrow in single block → Wave AI focused
-- [ ] Press Right arrow in Wave AI → block focused
+- [ ] Select text in Wove AI, click elsewhere in Wove AI → selection preserved
+- [ ] Click Wove AI panel (not input) → focus moves to Wove AI
+- [ ] Click block while in Wove AI (no selection) → focus moves to block
+- [ ] Press Left arrow in single block → Wove AI focused
+- [ ] Press Right arrow in Wove AI → block focused
 - [ ] Window blur (⌘+Tab) → focus state preserved
-- [ ] Open context menu in Wave AI → doesn't lose focus
+- [ ] Open context menu in Wove AI → doesn't lose focus
 - [ ] Modal opens/closes → focus restores correctly
 
 ## Benefits
 
-1. **Selection protection** - Wave AI selections preserved like blocks
+1. **Selection protection** - Wove AI selections preserved like blocks
 2. **No focus flash** - Capture phase provides immediate visual feedback
 3. **Robust blur handling** - Smart detection of where focus is going
 4. **Unified model** - Single source of truth simplifies reasoning
@@ -579,9 +579,9 @@ class FocusManager {
 
 ---
 
-### Phase 2: Wave AI Improvements (Testable in Isolation)
+### Phase 2: Wove AI Improvements (Testable in Isolation)
 
-**Add utilities and improve Wave AI focus handling**
+**Add utilities and improve Wove AI focus handling**
 
 1. Create `waveai-focus-utils.ts` with selection checking utilities
 2. Update `aipanel.tsx`:
@@ -595,22 +595,22 @@ class FocusManager {
 
 **Why this is safe:**
 
-- Wave AI now uses focus manager, but focus manager keeps old atom in sync
+- Wove AI now uses focus manager, but focus manager keeps old atom in sync
 - Blocks still read `waveAIFocusedAtom` directly - still works!
-- Can test Wave AI selection protection independently
-- If there's a bug, only Wave AI is affected
+- Can test Wove AI selection protection independently
+- If there's a bug, only Wove AI is affected
 - Blocks remain completely unchanged
 
 **Testing:**
 
-- Wave AI selection preservation when clicking within panel
-- Wave AI blur handling (window blur, context menus, etc.)
+- Wove AI selection preservation when clicking within panel
+- Wove AI blur handling (window blur, context menus, etc.)
 - Verify blocks still work normally (unchanged)
-- Test transitions between Wave AI and blocks
+- Test transitions between Wove AI and blocks
 
 **User-visible improvements:**
 
-- Wave AI text selections no longer lost when clicking in panel
+- Wove AI text selections no longer lost when clicking in panel
 - No focus ring flashing
 - Better window blur handling
 
@@ -633,7 +633,7 @@ isFocused: atom((get) => {
 **Why this is safe:**
 
 - Focus manager already keeps `waveAIFocusedAtom` in sync (Phase 1)
-- Wave AI already uses focus manager (Phase 2)
+- Wove AI already uses focus manager (Phase 2)
 - Blocks read the new `focusType` but it's always consistent with old atom
 - Should be completely transparent
 - Single file change - easy to revert if issues
@@ -641,8 +641,8 @@ isFocused: atom((get) => {
 **Testing:**
 
 - Focus transitions between blocks still work
-- Wave AI → block transitions work
-- Block → Wave AI transitions work
+- Wove AI → block transitions work
+- Block → Wove AI transitions work
 - Keyboard navigation still works
 - All existing functionality preserved
 
@@ -676,7 +676,7 @@ case LayoutTreeActionType.MagnifyNodeToggle:
 
 **Why this is safe:**
 
-- Just makes explicit what was already happening via Wave AI's blur handler
+- Just makes explicit what was already happening via Wove AI's blur handler
 - Ensures focus manager is updated even when layout programmatically changes focus
 - Makes the system more robust
 - Small, focused changes in one file
@@ -712,7 +712,7 @@ case LayoutTreeActionType.MagnifyNodeToggle:
 **Testing:**
 
 - Keyboard navigation between blocks
-- Left/Right arrow to/from Wave AI
+- Left/Right arrow to/from Wove AI
 - All keyboard shortcuts still work
 
 ---
@@ -734,7 +734,7 @@ This dual-sync approach eliminates the "all or nothing" problem. You can stop at
 After each phase, you can ship and test:
 
 - **Phase 1** → No user-visible changes, foundation in place
-- **Phase 2** → Wave AI improvements only, blocks unchanged
+- **Phase 2** → Wove AI improvements only, blocks unchanged
 - **Phase 3** → Complete system working with new architecture
 - **Phase 4** → More robust edge case handling
 - **Phase 5** → Code cleanup and optimization

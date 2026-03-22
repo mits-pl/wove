@@ -293,4 +293,4 @@ To debug event flow:
 ## Related Documentation
 
 - [Configuration System](config-system.md) - Uses WPS events for config updates
-- [Wave AI Architecture](waveai-architecture.md) - AI-related events
+- [Wove AI Architecture](waveai-architecture.md) - AI-related events

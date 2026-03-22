@@ -73,7 +73,7 @@ export const TabBarMockTabs: PreviewTabEntry[] = [
             { badgeid: "01958000-0000-7000-0000-000000000004", icon: "circle-small", color: "#fbbf24", priority: 1 },
         ],
     },
-    { tabId: "preview-tab-5", tabName: "Wave AI" },
+    { tabId: "preview-tab-5", tabName: "Wove AI" },
     { tabId: "preview-tab-6", tabName: "Preview", flagColor: "#bf55ec" },
 ];
 

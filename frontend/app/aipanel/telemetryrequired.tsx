@@ -34,9 +34,9 @@ const TelemetryRequiredMessage = ({ className }: TelemetryRequiredMessageProps) 
                 <div className="max-w-md space-y-6">
                     <div className="space-y-4">
                         <i className="fa fa-sparkles text-accent text-5xl"></i>
-                        <h2 className="text-2xl font-semibold text-foreground">Wave AI</h2>
+                        <h2 className="text-2xl font-semibold text-foreground">Wove AI</h2>
                         <p className="text-secondary leading-relaxed">
-                            Wave AI is free to use and provides integrated AI chat that can interact with your widgets,
+                            Wove AI is free to use and provides integrated AI chat that can interact with your widgets,
                             help you with code, analyze files, and assist with your terminal workflows.
                         </p>
                     </div>
@@ -45,10 +45,10 @@ const TelemetryRequiredMessage = ({ className }: TelemetryRequiredMessageProps) 
                         <div className="flex items-start gap-3">
                             <i className="fa fa-info-circle text-blue-400 text-lg mt-0.5"></i>
                             <div className="text-left">
-                                <div className="text-blue-400 font-medium mb-1">Telemetry keeps Wave AI free</div>
+                                <div className="text-blue-400 font-medium mb-1">Telemetry keeps Wove AI free</div>
                                 <div className="text-secondary text-sm mb-3">
                                     <p className="mb-2">
-                                        To keep Wave AI free for everyone, we require a small amount of <i>anonymous</i>{" "}
+                                        To keep Wove AI free for everyone, we require a small amount of <i>anonymous</i>{" "}
                                         usage data (app version, feature usage, system info).
                                     </p>
                                     <p className="mb-2">
@@ -57,7 +57,7 @@ const TelemetryRequiredMessage = ({ className }: TelemetryRequiredMessageProps) 
                                     </p>
                                     <p className="mb-2">
                                         We never collect your files, prompts, keystrokes, hostnames, or personally
-                                        identifying information. Wave AI is powered by OpenAI's APIs, please refer to
+                                        identifying information. Wove AI is powered by OpenAI's APIs, please refer to
                                         OpenAI's privacy policy for details on how they handle your data.
                                     </p>
                                     <p>

@@ -61,7 +61,7 @@ const WaveAIButton = memo(({ divRef }: { divRef?: React.RefObject<HTMLDivElement
 
     return (
         <Tooltip
-            content="Toggle Wave AI Panel"
+            content="Toggle Wove AI Panel"
             placement="bottom"
             hideOnClick
             divClassName={`flex h-[22px] px-3.5 justify-end mb-1 items-center rounded-md mr-1 box-border cursor-pointer bg-hover hover:bg-hoverbg transition-colors text-[12px] ${aiPanelOpen ? "text-accent" : "text-secondary"}`}

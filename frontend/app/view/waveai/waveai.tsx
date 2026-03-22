@@ -104,7 +104,7 @@ export class WaveAiModel implements ViewModel {
         this.viewType = "waveai";
         this.blockAtom = WOS.getWaveObjectAtom<Block>(`block:${blockId}`);
         this.viewIcon = atom("sparkles");
-        this.viewName = atom("Wave AI");
+        this.viewName = atom("Wove AI");
         this.messagesAtom = atom([]);
         this.messagesSplitAtom = splitAtom(this.messagesAtom);
         this.latestMessageAtom = atom((get) => get(this.messagesAtom).slice(-1)[0]);
@@ -875,12 +875,12 @@ const WaveAi = ({ model }: { model: WaveAiModel; blockId: string }) => {
                 <div className="flex items-start gap-3 px-4 py-2 bg-orange-500/25 border-b border-orange-500/50 text-sm">
                     <i className="fa-sharp fa-solid fa-triangle-exclamation text-orange-300 mt-0.5"></i>
                     <span className="text-primary/90">
-                        Wave AI Proxy is deprecated and will be removed. Please use the new{" "}
+                        Wove AI Proxy is deprecated and will be removed. Please use the new{" "}
                         <button
                             onClick={handleOpenAIPanel}
                             className="text-accent hover:text-accent/80 underline cursor-pointer"
                         >
-                            Wave AI panel
+                            Wove AI panel
                         </button>{" "}
                         instead (better model, terminal integration, tool support, image uploads).
                     </span>

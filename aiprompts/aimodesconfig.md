@@ -1,8 +1,8 @@
-# Wave AI Modes Configuration - Visual Editor Architecture
+# Wove AI Modes Configuration - Visual Editor Architecture
 
 ## Overview
 
-Wave Terminal's AI modes configuration system allows users to define custom AI assistants with different providers, models, and capabilities. The configuration is stored in `~/.waveterm/config/waveai.json` and provides a flexible way to configure multiple AI modes that appear in the Wave AI panel.
+Wave Terminal's AI modes configuration system allows users to define custom AI assistants with different providers, models, and capabilities. The configuration is stored in `~/.waveterm/config/waveai.json` and provides a flexible way to configure multiple AI modes that appear in the Wove AI panel.
 
 **Key Design Decisions:**
 - Visual editor works on **valid JSON only** - if JSON is invalid, fall back to JSON editor
@@ -46,7 +46,7 @@ type AIModeConfigType struct {
     AzureResourceName  string   `json:"ai:azureresourcename,omitempty"`
     AzureDeployment    string   `json:"ai:azuredeployment,omitempty"`
     
-    // Wave AI Specific
+    // Wove AI Specific
     WaveAICloud        bool     `json:"waveai:cloud,omitempty"`
     WaveAIPremium      bool     `json:"waveai:premium,omitempty"`
 }
@@ -60,7 +60,7 @@ Keys follow pattern: `provider@modename` (e.g., `waveai@quick`, `openai@gpt4`)
 
 **Defined in:** `pkg/aiusechat/uctypes/uctypes.go:27-35`
 
-1. **wave** - Wave AI Cloud service
+1. **wave** - Wove AI Cloud service
    - Auto-sets: `waveai:cloud = true`, endpoint from env or default
    - Default endpoint: `https://cfapi.waveterm.dev/api/waveai`
    - Used for Wave's hosted AI modes
@@ -95,7 +95,7 @@ Keys follow pattern: `provider@modename` (e.g., `waveai@quick`, `openai@gpt4`)
 
 **Location:** `pkg/wconfig/defaultconfig/waveai.json`
 
-Ships with three Wave AI modes:
+Ships with three Wove AI modes:
 - `waveai@quick` - Fast responses (gpt-5-mini, low thinking)
 - `waveai@balanced` - Balanced (gpt-5.1, low thinking) [premium]
 - `waveai@deep` - Maximum capability (gpt-5.1, medium thinking) [premium]
@@ -116,7 +116,7 @@ The component receives:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  Wave AI Modes Configuration                            │
+│  Wove AI Modes Configuration                            │
 │  ┌───────────────┐  ┌──────────────────────────────┐   │
 │  │               │  │                              │   │
 │  │  Mode List    │  │    Mode Editor/Viewer        │   │
@@ -364,7 +364,7 @@ Display next to API Key field for providers that need one:
 - Display modes sorted by `display:order` (ascending)
 - Show icon, name, short description
 - Badge showing provider type
-- Highlight Wave AI premium modes
+- Highlight Wove AI premium modes
 - Click to edit
 
 #### 2. Add New Mode Flow
