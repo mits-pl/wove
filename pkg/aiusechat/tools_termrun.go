@@ -225,7 +225,9 @@ func GetTermRunCommandToolDefinition(tabId string) uctypes.ToolDefinition {
 				output.ExitCode = &exitCode
 			}
 
-			if scrollErr == nil && scrollbackResult != nil {
+			if scrollErr != nil {
+				output.Output = fmt.Sprintf("[command executed but output could not be read: %v]", scrollErr)
+			} else if scrollbackResult != nil {
 				lines := scrollbackResult.Lines
 				if len(lines) > TermRunMaxOutputLines {
 					lines = lines[len(lines)-TermRunMaxOutputLines:]
