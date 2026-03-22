@@ -95,8 +95,12 @@ export class WebViewModel implements ViewModel {
         this.isLoading = atom(false);
         this.refreshIcon = atom("rotate-right");
         this.viewIcon = atom("globe");
-        this.viewName = atom("Web");
-        this.hideViewName = atom(true);
+        this.viewName = atom((get) => {
+            const block = get(this.blockAtom);
+            const title = block?.meta?.["web:title"] as string;
+            return title || "Web";
+        });
+        this.hideViewName = atom(false);
         this.urlInputRef = createRef<HTMLInputElement>();
         this.webviewRef = createRef<WebviewTag>();
         this.domReady = atom(false);
