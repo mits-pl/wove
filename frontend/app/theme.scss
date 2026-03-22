@@ -11,8 +11,8 @@
     --border-color: rgba(255, 255, 255, 0.16);
     --base-font: normal 14px / normal "Inter", sans-serif;
     --fixed-font: normal 12px / normal "Hack", monospace;
-    --accent-color: rgb(88, 193, 66);
-    --panel-bg-color: rgba(31, 33, 31, 0.5);
+    --accent-color: rgb(120, 90, 235);
+    --panel-bg-color: rgba(28, 28, 35, 0.5);
     --highlight-bg-color: rgba(255, 255, 255, 0.2);
     --markdown-font-family:
         -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif, "Apple Color Emoji",
@@ -42,7 +42,7 @@
     --header-icon-width: 16px;
     --header-height: 30px;
 
-    --tab-green: rgb(88, 193, 66);
+    --tab-green: rgb(120, 90, 235);
 
     /* z-index values */
     --zindex-header-hover: 100;
@@ -90,7 +90,7 @@
     --toggle-checked-bg-color: var(--accent-color);
 
     // link color
-    --link-color: #58c142;
+    --link-color: #785aeb;
 
     // form colors
     --form-element-border-color: rgba(241, 246, 243, 0.15);
@@ -109,10 +109,10 @@
     --conn-icon-color-5: #497bf8;
     --conn-icon-color-6: #ffa24e;
     --conn-icon-color-7: #dbde52;
-    --conn-icon-color-8: #58c142;
+    --conn-icon-color-8: #785aeb;
     --conn-status-overlay-bg-color: rgba(230, 186, 30, 0.2);
 
-    --sysinfo-cpu-color: #58c142;
+    --sysinfo-cpu-color: #785aeb;
     --sysinfo-mem-color: #53b4ea;
 
     --bulb-color: rgb(255, 221, 51);
@@ -129,7 +129,7 @@
     --term-white: #d0d0d0;
     --term-bright-black: #555753;
     --term-bright-red: #ef2929;
-    --term-bright-green: #58c142;
+    --term-bright-green: #785aeb;
     --term-bright-yellow: #fce94f;
     --term-bright-blue: #32afff;
     --term-bright-magenta: #ad7fa8;

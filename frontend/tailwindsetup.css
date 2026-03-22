@@ -13,28 +13,28 @@
     --color-muted-foreground: rgb(195, 200, 194);
     --color-secondary: rgb(195, 200, 194);
     --color-muted: rgb(140, 145, 140);
-    --color-accent-50: rgb(236, 253, 232);
-    --color-accent-100: rgb(209, 250, 202);
-    --color-accent-200: rgb(167, 243, 168);
-    --color-accent-300: rgb(110, 231, 133);
-    --color-accent-400: rgb(88, 193, 66); /* main accent color */
-    --color-accent-500: rgb(63, 162, 51);
-    --color-accent-600: rgb(47, 133, 47);
-    --color-accent-700: rgb(34, 104, 43);
-    --color-accent-800: rgb(22, 81, 35);
-    --color-accent-900: rgb(15, 61, 29);
+    --color-accent-50: rgb(238, 235, 254);
+    --color-accent-100: rgb(221, 214, 253);
+    --color-accent-200: rgb(191, 179, 251);
+    --color-accent-300: rgb(155, 135, 247);
+    --color-accent-400: rgb(120, 90, 235); /* main accent color */
+    --color-accent-500: rgb(99, 70, 215);
+    --color-accent-600: rgb(79, 55, 190);
+    --color-accent-700: rgb(62, 42, 158);
+    --color-accent-800: rgb(47, 32, 125);
+    --color-accent-900: rgb(33, 22, 93);
     --color-error: rgb(229, 77, 46);
     --color-warning: rgb(224, 185, 86);
     --color-success: rgb(78, 154, 6);
-    --color-panel: rgba(31, 33, 31, 0.5);
+    --color-panel: rgba(28, 28, 35, 0.5);
     --color-hover: rgba(255, 255, 255, 0.1);
     --color-border: rgba(255, 255, 255, 0.16);
-    --color-modalbg: #232323;
-    --color-accentbg: rgba(88, 193, 66, 0.5);
+    --color-modalbg: #1e1e28;
+    --color-accentbg: rgba(120, 90, 235, 0.5);
     --color-hoverbg: rgba(255, 255, 255, 0.2);
     --color-highlightbg: rgba(255, 255, 255, 0.2);
-    --color-accent: rgb(88, 193, 66);
-    --color-accenthover: rgb(118, 223, 96);
+    --color-accent: rgb(120, 90, 235);
+    --color-accenthover: rgb(145, 115, 245);
 
     --font-sans: "Inter", sans-serif;
     --font-mono: "Hack", monospace;
