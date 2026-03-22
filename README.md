@@ -1,3 +1,11 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/wove-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="./assets/wove-light.png">
+    <img alt="Wove" src="./assets/wove-light.png" width="240">
+  </picture>
+</p>
+
 # Wove
 
 **The AI-first terminal for developers who code, not click.**
