@@ -23,6 +23,7 @@ import (
 	"github.com/woveterm/wove/pkg/aiusechat/chatstore"
 	"github.com/woveterm/wove/pkg/aiusechat/projectctx"
 	"github.com/woveterm/wove/pkg/aiusechat/sessionhistory"
+	"github.com/woveterm/wove/pkg/aiusechat/skills"
 	"github.com/woveterm/wove/pkg/aiusechat/uctypes"
 	"github.com/woveterm/wove/pkg/secretstore"
 	"github.com/woveterm/wove/pkg/telemetry"
@@ -775,6 +776,17 @@ func WaveAIPostMessageHandler(w http.ResponseWriter, r *http.Request) {
 					chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, "Context: "+strings.Join(hints, "; ")+".")
 				}
 			}
+
+			// Check if message is a direct skill invocation (/skill-name args)
+			// When user types /skill-name, inject the skill body directly into system prompt
+			// (the invoke_skill tool handles AI-initiated skill invocations)
+			if skillName, rawArgs, ok := skills.ParseSlashCommand(req.Msg.GetText()); ok {
+				if loaded, err := skills.LoadSkillContent(cwd, skillName); err == nil {
+					chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, skills.FormatSkillInvocation(loaded, rawArgs))
+				} else {
+					log.Printf("[skills] skill %q not found: %v\n", skillName, err)
+				}
+			}
 		}
 	}
 
@@ -866,6 +878,23 @@ func WaveAIGetChatHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
 		return
 	}
+}
+
+// WaveAIGetSkillsHandler returns available skills for the given tab's CWD.
+func WaveAIGetSkillsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	tabId := r.URL.Query().Get("tabid")
+	if tabId == "" {
+		http.Error(w, "tabid parameter is required", http.StatusBadRequest)
+		return
+	}
+	cwd := getTerminalCwd(r.Context(), tabId)
+	manifests := skills.DiscoverSkills(cwd)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(manifests)
 }
 
 // CreateWriteTextFileDiff generates a diff for write_text_file or edit_text_file tool calls.

@@ -216,6 +216,18 @@ func GenerateTabStateAndTools(ctx context.Context, tabid string, widgetAccess bo
 		}
 		// web_open is always available (doesn't require an existing web widget)
 		tools = append(tools, GetWebOpenToolDefinition(tabid))
+
+		// Skill invocation tool (only if skills are available)
+		skillTool := GetInvokeSkillToolDefinition(tabid)
+		if skillTool.InputSchema != nil {
+			if props, ok := skillTool.InputSchema["properties"].(map[string]any); ok {
+				if nameField, ok := props["name"].(map[string]any); ok {
+					if enumList, ok := nameField["enum"].([]any); ok && len(enumList) > 0 {
+						tools = append(tools, skillTool)
+					}
+				}
+			}
+		}
 	}
 	return tabState, tools, nil
 }
