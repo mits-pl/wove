@@ -1032,6 +1032,12 @@ export class RpcApiType {
         return client.wshRpcCall("waveinfo", null, opts);
     }
 
+    // command "webcapture" [call]
+    WebCaptureCommand(client: WshClient, data: CommandWebCaptureData, opts?: RpcOpts): Promise<WebCaptureRtnData> {
+        if (this.mockClient) return this.mockClient.mockWshRpcCall(client, "webcapture", data, opts);
+        return client.wshRpcCall("webcapture", data, opts);
+    }
+
     // command "webselector" [call]
     WebSelectorCommand(client: WshClient, data: CommandWebSelectorData, opts?: RpcOpts): Promise<string[]> {
         if (this.mockClient) return this.mockClient.mockWshRpcCall(client, "webselector", data, opts);

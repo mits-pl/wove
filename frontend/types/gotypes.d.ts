@@ -742,6 +742,13 @@ declare global {
         streammeta: StreamMeta;
     };
 
+    // wshrpc.CommandWebCaptureData
+    type CommandWebCaptureData = {
+        workspaceid: string;
+        blockid: string;
+        tabid: string;
+    };
+
     // wshrpc.CommandWebSelectorData
     type CommandWebSelectorData = {
         workspaceid: string;
@@ -1146,8 +1153,6 @@ declare global {
         "waveai:model"?: string;
         "waveai:chatid"?: string;
         "waveai:widgetcontext"?: boolean;
-        "waveai:mcpcontext"?: boolean;
-        "waveai:mcpcwd"?: string;
         "term:*"?: boolean;
         "term:fontsize"?: number;
         "term:fontfamily"?: string;
@@ -1228,6 +1233,7 @@ declare global {
         "waveai:chatid"?: string;
         "waveai:mode"?: string;
         "waveai:maxoutputtokens"?: number;
+        "claude:state"?: string;
     };
 
     // wshrpc.PathCommandData
@@ -1242,6 +1248,14 @@ declare global {
     type Point = {
         x: number;
         y: number;
+    };
+
+    // wps.RTInfoUpdateData
+    type RTInfoUpdateData = {
+        "shell:state"?: string;
+        "shell:lastcmd"?: string;
+        "shell:lastcmdexitcode"?: number;
+        "claude:state"?: string;
     };
 
     // uctypes.RateLimitInfo
@@ -2114,6 +2128,33 @@ declare global {
         args: any[];
     };
 
+    // wshrpc.WebCaptureElement
+    type WebCaptureElement = {
+        idx: number;
+        tag: string;
+        text?: string;
+        bbox: number[];
+        int?: boolean;
+        sel: string;
+        frame?: number;
+        desc: string;
+    };
+
+    // wshrpc.WebCaptureRtnData
+    type WebCaptureRtnData = {
+        screenshot: string;
+        elements: WebCaptureElement[];
+        viewport: WebCaptureViewport;
+    };
+
+    // wshrpc.WebCaptureViewport
+    type WebCaptureViewport = {
+        scrolly: number;
+        pageheight: number;
+        width: number;
+        height: number;
+    };
+
     // service.WebReturnType
     type WebReturnType = {
         success?: boolean;
@@ -2128,8 +2169,9 @@ declare global {
         inner?: boolean;
         innertext?: boolean;
         reload?: boolean;
-        highlight?: boolean;
         execjs?: string;
+        highlight?: boolean;
+        mouseclick?: boolean;
     };
 
     // wconfig.WidgetConfigType

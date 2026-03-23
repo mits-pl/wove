@@ -487,6 +487,18 @@ func ConvertToolResultsToOpenAIChatMessage(toolResults []uctypes.AIToolResult) (
 				return nil, fmt.Errorf("failed to marshal error output: %w", err)
 			}
 			outputData = string(errorBytes)
+		} else if result.ImageUrl != "" && result.Text != "" {
+			// Multi-part result: text + image
+			outputData = []OpenAIMessageContent{
+				{
+					Type: "input_text",
+					Text: result.Text,
+				},
+				{
+					Type:     "input_image",
+					ImageUrl: result.ImageUrl,
+				},
+			}
 		} else {
 			// Check if text looks like an image data URL
 			if strings.HasPrefix(result.Text, "data:image/") {

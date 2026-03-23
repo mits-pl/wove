@@ -44,6 +44,7 @@ const BuilderMaxTokens = 24 * 1024
 
 func init() {
 	sessionhistory.SaveAllCallback = saveAllSessionHistories
+	wstore.OnChatIdChangeCallback = onChatIdChange
 }
 
 var (
@@ -542,7 +543,7 @@ func ResolveToolCall(toolDef *uctypes.ToolDefinition, toolCall uctypes.WaveToolC
 		return
 	}
 
-	// Try ToolTextCallback first, then ToolAnyCallback
+	// Try ToolTextCallback first, then ToolImageTextCallback, then ToolAnyCallback
 	if toolDef.ToolTextCallback != nil {
 		text, err := toolDef.ToolTextCallback(toolCall.Input)
 		if err != nil {
@@ -550,6 +551,17 @@ func ResolveToolCall(toolDef *uctypes.ToolDefinition, toolCall uctypes.WaveToolC
 		} else {
 			result.Text = text
 			// Recompute tool description with the result
+			if toolDef.ToolCallDesc != nil && toolCall.ToolUseData != nil {
+				toolCall.ToolUseData.ToolDesc = toolDef.ToolCallDesc(toolCall.Input, text, toolCall.ToolUseData)
+			}
+		}
+	} else if toolDef.ToolImageTextCallback != nil {
+		text, imageUrl, err := toolDef.ToolImageTextCallback(toolCall.Input)
+		if err != nil {
+			result.ErrorText = err.Error()
+		} else {
+			result.Text = text
+			result.ImageUrl = imageUrl
 			if toolDef.ToolCallDesc != nil && toolCall.ToolUseData != nil {
 				toolCall.ToolUseData.ToolDesc = toolDef.ToolCallDesc(toolCall.Input, text, toolCall.ToolUseData)
 			}
@@ -972,6 +984,33 @@ func generateBuilderAppData(appId string) (string, string, string, error) {
 }
 
 // saveAllSessionHistories converts all in-memory chats to UIChat and saves as session history.
+// onChatIdChange is called when waveai:chatid changes (e.g. user starts a new chat).
+// It saves the old chat's session history so it's available in the next chat.
+func onChatIdChange(oref waveobj.ORef, oldChatId string) {
+	tabId := sessionhistory.GetTabForChat(oldChatId)
+	if tabId == "" {
+		// Try to derive tabId from oref (oref is typically tab:tabid)
+		if oref.OType == "tab" {
+			tabId = oref.OID
+		}
+	}
+	if tabId == "" {
+		return
+	}
+	aiChat := chatstore.DefaultChatStore.Get(oldChatId)
+	if aiChat == nil {
+		return
+	}
+	uiChat, err := ConvertAIChatToUIChat(aiChat)
+	if err != nil {
+		log.Printf("[sessionhistory] error converting chat %s on clear: %v\n", oldChatId[:8], err)
+		return
+	}
+	sessionhistory.SaveChatAsHistory(tabId, uiChat)
+	chatstore.DefaultChatStore.Delete(oldChatId)
+	log.Printf("[sessionhistory] saved history for chat %s (new chat started)\n", oldChatId[:8])
+}
+
 func saveAllSessionHistories() {
 	allChats := chatstore.DefaultChatStore.GetAll()
 	mappings := sessionhistory.GetAllMappings()

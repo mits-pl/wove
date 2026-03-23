@@ -131,6 +131,7 @@ type WshRpcInterface interface {
 
 	// emain
 	WebSelectorCommand(ctx context.Context, data CommandWebSelectorData) ([]string, error)
+	WebCaptureCommand(ctx context.Context, data CommandWebCaptureData) (*WebCaptureRtnData, error)
 	NotifyCommand(ctx context.Context, notificationOptions WaveNotificationOptions) error
 	FocusWindowCommand(ctx context.Context, windowId string) error
 	ElectronEncryptCommand(ctx context.Context, data CommandElectronEncryptData) (*CommandElectronEncryptRtnData, error)
@@ -471,12 +472,13 @@ type ConnStatus struct {
 }
 
 type WebSelectorOpts struct {
-	All       bool   `json:"all,omitempty"`
-	Inner     bool   `json:"inner,omitempty"`
-	InnerText bool   `json:"innertext,omitempty"`
-	Reload    bool   `json:"reload,omitempty"`
-	ExecJs    string `json:"execjs,omitempty"`
-	Highlight bool   `json:"highlight,omitempty"`
+	All        bool   `json:"all,omitempty"`
+	Inner      bool   `json:"inner,omitempty"`
+	InnerText  bool   `json:"innertext,omitempty"`
+	Reload     bool   `json:"reload,omitempty"`
+	ExecJs     string `json:"execjs,omitempty"`
+	Highlight  bool   `json:"highlight,omitempty"`
+	MouseClick bool   `json:"mouseclick,omitempty"` // use native mouse event instead of JS click
 }
 
 type CommandWebSelectorData struct {
@@ -583,6 +585,36 @@ type CommandWaveAIGetToolDiffRtnData struct {
 
 type CommandCaptureBlockScreenshotData struct {
 	BlockId string `json:"blockid"`
+}
+
+type CommandWebCaptureData struct {
+	WorkspaceId string `json:"workspaceid"`
+	BlockId     string `json:"blockid"`
+	TabId       string `json:"tabid"`
+}
+
+type WebCaptureElement struct {
+	Idx         int    `json:"idx"`
+	Tag         string `json:"tag"`
+	Text        string `json:"text,omitempty"`
+	Bbox        []int  `json:"bbox"`            // [x, y, w, h]
+	Interactive bool   `json:"int,omitempty"`
+	Selector    string `json:"sel"`             // CSS selector for web_click/web_type_input
+	FrameIdx    int    `json:"frame,omitempty"` // 0 = main frame
+	Desc        string `json:"desc"`            // "[Click] button#submit at (201,450)"
+}
+
+type WebCaptureViewport struct {
+	ScrollY    int `json:"scrolly"`
+	PageHeight int `json:"pageheight"`
+	Width      int `json:"width"`
+	Height     int `json:"height"`
+}
+
+type WebCaptureRtnData struct {
+	Screenshot string              `json:"screenshot"` // data:image/jpeg;base64,...
+	Elements   []WebCaptureElement `json:"elements"`
+	Viewport   WebCaptureViewport  `json:"viewport"`
 }
 
 type CommandVarData struct {

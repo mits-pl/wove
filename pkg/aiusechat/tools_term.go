@@ -43,19 +43,19 @@ type TermGetScrollbackToolOutput struct {
 	LastCommand        *CommandInfo `json:"lastcommand,omitempty"`
 }
 
-func parseTermGetScrollbackInput(input any) (*TermGetScrollbackToolInput, error) {
-	const (
-		DefaultCount = 200
-		MaxCount     = 1000
-	)
+const (
+	ScrollbackDefaultCount = 100
+	ScrollbackMaxCount     = 1000
+)
 
+func parseTermGetScrollbackInput(input any) (*TermGetScrollbackToolInput, error) {
 	result := &TermGetScrollbackToolInput{
 		LineStart: 0,
 		Count:     0,
 	}
 
 	if input == nil {
-		result.Count = DefaultCount
+		result.Count = ScrollbackDefaultCount
 		return result, nil
 	}
 
@@ -69,14 +69,14 @@ func parseTermGetScrollbackInput(input any) (*TermGetScrollbackToolInput, error)
 	}
 
 	if result.Count == 0 {
-		result.Count = DefaultCount
+		result.Count = ScrollbackDefaultCount
 	}
 
 	if result.Count < 0 {
 		return nil, fmt.Errorf("count must be positive")
 	}
 
-	result.Count = min(result.Count, MaxCount)
+	result.Count = min(result.Count, ScrollbackMaxCount)
 
 	return result, nil
 }
@@ -158,7 +158,7 @@ func GetTermGetScrollbackToolDefinition(tabId string) uctypes.ToolDefinition {
 	return uctypes.ToolDefinition{
 		Name:        "term_get_scrollback",
 		DisplayName: "Get Terminal Scrollback",
-		Description: "Get terminal scrollback text. Index 0 = newest line. Includes last command and exit code.",
+		Description: "Read terminal scrollback. Returns lines in chronological order (oldest first, newest/most recent output LAST). line_start=0 means start from the most recent lines. Use 'count' to control how many lines to read. The 'hasmore' field indicates older history is available. For checking recent output, the default (latest 100 lines) is usually sufficient — do NOT paginate unless you specifically need older history.",
 		ToolLogName: "term:getscrollback",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -170,12 +170,12 @@ func GetTermGetScrollbackToolDefinition(tabId string) uctypes.ToolDefinition {
 				"line_start": map[string]any{
 					"type":        "integer",
 					"minimum":     0,
-					"description": "Logical start index where 0 = most recent line (default: 0).",
+					"description": "Start offset from the bottom of scrollback. 0 = most recent lines (default: 0). Higher values = older lines.",
 				},
 				"count": map[string]any{
 					"type":        "integer",
 					"minimum":     1,
-					"description": "Number of lines to return from line_start (default: 200).",
+					"description": "Number of lines to return (default: 100, max: 1000). Start small — only increase if you need more context.",
 				},
 			},
 			"required":             []string{"widget_id"},
@@ -187,7 +187,7 @@ func GetTermGetScrollbackToolDefinition(tabId string) uctypes.ToolDefinition {
 				return fmt.Sprintf("error parsing input: %v", err)
 			}
 
-			if parsed.LineStart == 0 && parsed.Count == 200 {
+			if parsed.LineStart == 0 && parsed.Count == ScrollbackDefaultCount {
 				return fmt.Sprintf("reading terminal output from %s (most recent %d lines)", parsed.WidgetId, parsed.Count)
 			}
 			lineEnd := parsed.LineStart + parsed.Count

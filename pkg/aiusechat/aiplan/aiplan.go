@@ -73,28 +73,46 @@ func CreatePlanWithDetails(tabId string, name string, description string, stepLa
 		return nil, fmt.Errorf("creating plans dir: %w", err)
 	}
 
-	// Auto-append testing and lint steps if not already present
-	hasTestStep := false
-	hasLintStep := false
+	// Check if this plan involves writing/modifying code
+	isCodeTask := false
+	codeKeywords := []string{"write", "create", "edit", "add", "implement", "fix", "refactor", "update", "modify", "change", "replace", "move", "rename", "delete", "remove", "migrate"}
 	for _, label := range stepLabels {
 		lower := strings.ToLower(label)
-		if strings.Contains(lower, "test") && (strings.Contains(lower, "write") || strings.Contains(lower, "create")) {
-			hasTestStep = true
+		for _, kw := range codeKeywords {
+			if strings.Contains(lower, kw) {
+				isCodeTask = true
+				break
+			}
 		}
-		if strings.Contains(lower, "lint") || strings.Contains(lower, "pint") || strings.Contains(lower, "format") {
-			hasLintStep = true
+		if isCodeTask {
+			break
 		}
 	}
-	if !hasLintStep {
-		stepLabels = append(stepLabels, "Run syntax check (php -l) and lint/format (pint) on all modified files")
+
+	// Auto-append testing and lint steps only for code tasks
+	if isCodeTask {
+		hasTestStep := false
+		hasLintStep := false
+		for _, label := range stepLabels {
+			lower := strings.ToLower(label)
+			if strings.Contains(lower, "test") && (strings.Contains(lower, "write") || strings.Contains(lower, "create")) {
+				hasTestStep = true
+			}
+			if strings.Contains(lower, "lint") || strings.Contains(lower, "pint") || strings.Contains(lower, "format") {
+				hasLintStep = true
+			}
+		}
+		if !hasLintStep {
+			stepLabels = append(stepLabels, "Run syntax check (php -l) and lint/format (pint) on all modified files")
+		}
+		// Review step: verify code against project conventions
+		stepLabels = append(stepLabels, "Call wave_utils(action='project_instructions') then review all created files against those rules - fix any violations")
+		if !hasTestStep {
+			stepLabels = append(stepLabels, "Write NEW test file with happy path, edge cases, and business logic tests")
+		}
+		// Always end with running tests
+		stepLabels = append(stepLabels, "Run all tests and verify they pass")
 	}
-	// Review step: verify code against project conventions
-	stepLabels = append(stepLabels, "Call wave_utils(action='project_instructions') then review all created files against those rules - fix any violations")
-	if !hasTestStep {
-		stepLabels = append(stepLabels, "Write NEW test file with happy path, edge cases, and business logic tests")
-	}
-	// Always end with running tests
-	stepLabels = append(stepLabels, "Run all tests and verify they pass")
 
 	steps := make([]PlanStep, len(stepLabels))
 	for i, label := range stepLabels {

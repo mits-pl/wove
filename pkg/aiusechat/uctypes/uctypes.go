@@ -108,8 +108,9 @@ type ToolDefinition struct {
 	Strict               bool           `json:"strict,omitempty"`
 	RequiredCapabilities []string       `json:"requiredcapabilities,omitempty"`
 
-	ToolTextCallback func(any) (string, error)                     `json:"-"`
-	ToolAnyCallback  func(any, *UIMessageDataToolUse) (any, error) `json:"-"` // *UIMessageDataToolUse will NOT be nil
+	ToolTextCallback      func(any) (string, error)                              `json:"-"`
+	ToolImageTextCallback func(any) (text string, imageUrl string, err error)   `json:"-"` // returns text + image data URL
+	ToolAnyCallback       func(any, *UIMessageDataToolUse) (any, error)         `json:"-"` // *UIMessageDataToolUse will NOT be nil
 	ToolCallDesc     func(any, any, *UIMessageDataToolUse) string  `json:"-"` // passed input, output (may be nil), *UIMessageDataToolUse (may be nil)
 	ToolApproval     func(any) string                              `json:"-"`
 	ToolVerifyInput  func(any, *UIMessageDataToolUse) error        `json:"-"` // *UIMessageDataToolUse will NOT be nil
@@ -368,6 +369,7 @@ type AIToolResult struct {
 	ToolUseID string `json:"tooluseid"`
 	ErrorText string `json:"errortext,omitempty"`
 	Text      string `json:"text,omitempty"`
+	ImageUrl  string `json:"imageurl,omitempty"` // optional image data URL (returned alongside Text)
 }
 
 func (m *AIMessage) GetMessageId() string {

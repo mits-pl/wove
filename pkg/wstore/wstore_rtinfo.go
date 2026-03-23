@@ -9,12 +9,58 @@ import (
 	"sync"
 
 	"github.com/woveterm/wove/pkg/waveobj"
+	"github.com/woveterm/wove/pkg/wps"
 )
 
 var (
-	rtInfoStore = make(map[waveobj.ORef]*waveobj.ObjRTInfo)
-	rtInfoMutex sync.RWMutex
+	rtInfoStore    = make(map[waveobj.ORef]*waveobj.ObjRTInfo)
+	rtInfoMutex    sync.RWMutex
+	rtInfoWatchers = make(map[waveobj.ORef][]chan *wps.RTInfoUpdateData)
+	watcherMutex   sync.Mutex
 )
+
+// OnChatIdChangeCallback is called when waveai:chatid changes in SetRTInfo.
+// Set by usechat package to save session history before the old chat is abandoned.
+// Parameters: oref, oldChatId.
+var OnChatIdChangeCallback func(oref waveobj.ORef, oldChatId string)
+
+// WatchRTInfoShellState registers a channel that receives RTInfoUpdateData when shell:state changes
+// for the given ORef. Returns an unsubscribe function that must be called to clean up.
+func WatchRTInfoShellState(oref waveobj.ORef) (<-chan *wps.RTInfoUpdateData, func()) {
+	ch := make(chan *wps.RTInfoUpdateData, 1)
+	watcherMutex.Lock()
+	rtInfoWatchers[oref] = append(rtInfoWatchers[oref], ch)
+	watcherMutex.Unlock()
+	unsub := func() {
+		watcherMutex.Lock()
+		defer watcherMutex.Unlock()
+		watchers := rtInfoWatchers[oref]
+		for i, w := range watchers {
+			if w == ch {
+				rtInfoWatchers[oref] = append(watchers[:i], watchers[i+1:]...)
+				break
+			}
+		}
+		if len(rtInfoWatchers[oref]) == 0 {
+			delete(rtInfoWatchers, oref)
+		}
+	}
+	return ch, unsub
+}
+
+func notifyRTInfoWatchers(oref waveobj.ORef, data *wps.RTInfoUpdateData) {
+	watcherMutex.Lock()
+	watchers := make([]chan *wps.RTInfoUpdateData, len(rtInfoWatchers[oref]))
+	copy(watchers, rtInfoWatchers[oref])
+	watcherMutex.Unlock()
+	for _, ch := range watchers {
+		select {
+		case ch <- data:
+		default:
+			// non-blocking: drop if watcher isn't reading
+		}
+	}
+}
 
 func setFieldValue(fieldValue reflect.Value, value any) {
 	if value == nil {
@@ -81,15 +127,19 @@ func setFieldValue(fieldValue reflect.Value, value any) {
 // SetRTInfo merges the provided info map into the ObjRTInfo for the given ORef.
 // Only updates fields that exist in the ObjRTInfo struct.
 // Removes fields that have nil values.
+// Publishes Event_RTInfoUpdate when shell:state changes.
 func SetRTInfo(oref waveobj.ORef, info map[string]any) {
 	rtInfoMutex.Lock()
-	defer rtInfoMutex.Unlock()
 
 	rtInfo, exists := rtInfoStore[oref]
 	if !exists {
 		rtInfo = &waveobj.ObjRTInfo{}
 		rtInfoStore[oref] = rtInfo
 	}
+
+	prevShellState := rtInfo.ShellState
+	prevClaudeState := rtInfo.ClaudeState
+	prevChatId := rtInfo.WaveAIChatId
 
 	rtInfoValue := reflect.ValueOf(rtInfo).Elem()
 	rtInfoType := rtInfoValue.Type()
@@ -121,6 +171,41 @@ func SetRTInfo(oref waveobj.ORef, info map[string]any) {
 		}
 
 		setFieldValue(fieldValue, value)
+	}
+
+	// Capture data for event after merge (while still holding lock)
+	newShellState := rtInfo.ShellState
+	newClaudeState := rtInfo.ClaudeState
+	newChatId := rtInfo.WaveAIChatId
+	shellStateChanged := newShellState != prevShellState
+	claudeStateChanged := newClaudeState != prevClaudeState
+	chatIdChanged := prevChatId != "" && newChatId != prevChatId
+	shouldNotify := shellStateChanged || claudeStateChanged
+	var eventData *wps.RTInfoUpdateData
+	if shouldNotify {
+		eventData = &wps.RTInfoUpdateData{
+			ShellState:           rtInfo.ShellState,
+			ShellLastCmd:         rtInfo.ShellLastCmd,
+			ShellLastCmdExitCode: rtInfo.ShellLastCmdExitCode,
+			ClaudeState:          rtInfo.ClaudeState,
+		}
+	}
+
+	rtInfoMutex.Unlock()
+
+	// Save session history before the old chat is abandoned
+	if chatIdChanged && OnChatIdChangeCallback != nil {
+		go OnChatIdChangeCallback(oref, prevChatId)
+	}
+
+	// Notify local watchers and publish WPS event outside of lock to avoid deadlocks
+	if shouldNotify {
+		notifyRTInfoWatchers(oref, eventData)
+		wps.Broker.Publish(wps.WaveEvent{
+			Event:  wps.Event_RTInfoUpdate,
+			Scopes: []string{oref.String()},
+			Data:   eventData,
+		})
 	}
 }
 

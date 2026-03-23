@@ -21,9 +21,8 @@ import (
 )
 
 const (
-	TermRunCommandTimeout    = 60 * time.Second
-	TermRunCommandPollPeriod = 250 * time.Millisecond
-	TermRunMaxOutputLines    = 1000
+	TermRunCommandTimeout = 60 * time.Second
+	TermRunMaxOutputLines = 1000
 )
 
 type TermRunCommandInput struct {
@@ -70,25 +69,37 @@ func sendCommandToTerminal(blockId string, command string) error {
 }
 
 func waitForCommandCompletion(ctx context.Context, blockORef waveobj.ORef) (bool, error) {
-	ticker := time.NewTicker(TermRunCommandPollPeriod)
-	defer ticker.Stop()
+	// Check if already complete before subscribing
+	rtInfo := wstore.GetRTInfo(blockORef)
+	if rtInfo == nil {
+		return false, fmt.Errorf("terminal runtime info not available")
+	}
+	if !rtInfo.ShellIntegration {
+		return false, fmt.Errorf("shell integration is not enabled for this terminal")
+	}
+	if rtInfo.ShellState == "ready" {
+		return true, nil
+	}
+
+	// Subscribe to shell state changes for this block
+	watchCh, unsub := wstore.WatchRTInfoShellState(blockORef)
+	defer unsub()
+
+	// Check again after subscribing to avoid race condition
+	rtInfo = wstore.GetRTInfo(blockORef)
+	if rtInfo != nil && rtInfo.ShellState == "ready" {
+		return true, nil
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return false, ctx.Err()
-		case <-ticker.C:
-			rtInfo := wstore.GetRTInfo(blockORef)
-			if rtInfo == nil {
-				return false, fmt.Errorf("terminal runtime info not available")
-			}
-			if !rtInfo.ShellIntegration {
-				return false, fmt.Errorf("shell integration is not enabled for this terminal")
-			}
-			if rtInfo.ShellState == "ready" {
+		case update := <-watchCh:
+			if update != nil && update.ShellState == "ready" {
 				return true, nil
 			}
-			// still running, continue polling
+			// ShellState changed but not to "ready" yet, keep waiting
 		}
 	}
 }
@@ -97,7 +108,7 @@ func GetTermRunCommandToolDefinition(tabId string) uctypes.ToolDefinition {
 	return uctypes.ToolDefinition{
 		Name:        "term_run_command",
 		DisplayName: "Run Terminal Command",
-		Description: "Run a command in terminal and return output. For CLI tools (git, npm, artisan, etc.). Requires shell integration.",
+		Description: "Run a command in terminal and wait for it to finish, then return output. For short-lived CLI tools (git, npm, artisan, ls, grep, etc.). Has a 60-second timeout. Do NOT use for interactive or long-running programs (claude, vim, nano, top, htop, ssh, node/python REPLs, docker attach, etc.) - use term_send_input instead for those. Requires shell integration.",
 		ToolLogName: "term:runcommand",
 		InputSchema: map[string]any{
 			"type": "object",

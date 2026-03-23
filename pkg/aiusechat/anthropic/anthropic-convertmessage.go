@@ -781,6 +781,26 @@ func ConvertToolResultsToAnthropicChatMessage(toolResults []uctypes.AIToolResult
 		if result.ErrorText != "" {
 			content = result.ErrorText
 			isError = true
+		} else if result.ImageUrl != "" && result.Text != "" {
+			// Multi-part result: text + image
+			blocks := []anthropicMessageContentBlock{
+				{Type: "text", Text: result.Text},
+			}
+			imgParts := strings.SplitN(result.ImageUrl, ",", 2)
+			if len(imgParts) == 2 {
+				mediaTypePart := strings.TrimPrefix(imgParts[0], "data:")
+				mediaType := strings.Split(mediaTypePart, ";")[0]
+				blocks = append(blocks, anthropicMessageContentBlock{
+					Type: "image",
+					Source: &anthropicSource{
+						Type:      "base64",
+						Data:      imgParts[1],
+						MediaType: mediaType,
+					},
+				})
+			}
+			content = blocks
+			isError = false
 		} else {
 			// Check if text looks like an image data URL
 			if strings.HasPrefix(result.Text, "data:image/") {

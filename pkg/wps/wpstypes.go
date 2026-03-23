@@ -34,6 +34,7 @@ const (
 	Event_AIModeConfig        = "waveai:modeconfig"    // type: wconfig.AIModeConfigUpdate
 	Event_BlockJobStatus      = "block:jobstatus"      // type: wshrpc.BlockJobStatusData
 	Event_Badge               = "badge"                // type: baseds.BadgeEvent
+	Event_RTInfoUpdate        = "rtinfo:update"        // type: *RTInfoUpdateData
 )
 
 var AllEvents []string = []string{
@@ -56,6 +57,7 @@ var AllEvents []string = []string{
 	Event_AIModeConfig,
 	Event_BlockJobStatus,
 	Event_Badge,
+	Event_RTInfoUpdate,
 }
 
 type WaveEvent struct {
@@ -83,6 +85,13 @@ const (
 	FileOp_Truncate   = "truncate"
 	FileOp_Invalidate = "invalidate"
 )
+
+type RTInfoUpdateData struct {
+	ShellState           string `json:"shell:state,omitempty"`
+	ShellLastCmd         string `json:"shell:lastcmd,omitempty"`
+	ShellLastCmdExitCode int    `json:"shell:lastcmdexitcode,omitempty"`
+	ClaudeState          string `json:"claude:state,omitempty"`
+}
 
 type WSFileEventData struct {
 	ZoneId   string `json:"zoneid"`

@@ -144,6 +144,7 @@ func MakeLinkRouteId(linkId baseds.LinkId) string {
 	return fmt.Sprintf("%s%d", RoutePrefix_Link, linkId)
 }
 
+
 var DefaultRouter *WshRouter
 
 func NewWshRouter() *WshRouter {

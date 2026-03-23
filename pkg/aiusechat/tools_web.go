@@ -326,6 +326,57 @@ data.url = location.href;
 return JSON.stringify(data, null, 2);
 `
 
+func GetWebExecJsToolDefinition(tabId string) uctypes.ToolDefinition {
+	return uctypes.ToolDefinition{
+		Name:             "web_exec_js",
+		DisplayName:      "Execute JavaScript",
+		Description:      "Execute arbitrary JavaScript code in the web widget's page context, like a browser DevTools console. The code runs via a function body — use 'return' to send back a result. For example: 'return document.title' or 'return document.querySelectorAll(\"a\").length'. Does NOT reload the page, so it preserves current page state (form values, scroll position, etc.).",
+		ShortDescription: "Execute JS in web widget",
+		ToolLogName:      "web:execjs",
+		Strict:           true,
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"widget_id": map[string]any{
+					"type":        "string",
+					"description": "8-character widget ID of the web browser widget",
+				},
+				"code": map[string]any{
+					"type":        "string",
+					"description": "JavaScript code to execute. Runs as a function body — use 'return' to return a value.",
+				},
+			},
+			"required":             []string{"widget_id", "code"},
+			"additionalProperties": false,
+		},
+		ToolCallDesc: func(input any, output any, _ *uctypes.UIMessageDataToolUse) string {
+			inputMap, _ := input.(map[string]any)
+			widgetId, _ := inputMap["widget_id"].(string)
+			code, _ := inputMap["code"].(string)
+			if len(code) > 80 {
+				code = code[:80] + "..."
+			}
+			return fmt.Sprintf("executing JS in web widget %s: %s", widgetId, code)
+		},
+		ToolTextCallback: func(input any) (string, error) {
+			inputMap, ok := input.(map[string]any)
+			if !ok {
+				return "", fmt.Errorf("invalid input format")
+			}
+			widgetId, _ := inputMap["widget_id"].(string)
+			if widgetId == "" {
+				return "", fmt.Errorf("widget_id is required")
+			}
+			code, _ := inputMap["code"].(string)
+			if code == "" {
+				return "", fmt.Errorf("code is required")
+			}
+			parsed := &webSelectorInput{WidgetId: widgetId, Selector: "body"}
+			return webReadContent(tabId, parsed, &wshrpc.WebSelectorOpts{ExecJs: code})
+		},
+	}
+}
+
 func GetWebSEOAuditToolDefinition(tabId string) uctypes.ToolDefinition {
 	return uctypes.ToolDefinition{
 		Name:             "web_seo_audit",
@@ -354,6 +405,496 @@ func GetWebSEOAuditToolDefinition(tabId string) uctypes.ToolDefinition {
 				return "", err
 			}
 			return webReadContent(tabId, parsed, &wshrpc.WebSelectorOpts{ExecJs: seoAuditJS})
+		},
+	}
+}
+
+
+// webExecJsOnWidget executes JS in a web widget WITHOUT reloading the page first.
+// Use this for action tools (click, type, press key, exec_js) that should not reset page state.
+func webExecJsOnWidget(tabId string, widgetId string, js string) (string, error) {
+	ctx, cancelFn := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelFn()
+
+	fullBlockId, err := wcore.ResolveBlockIdFromPrefix(ctx, tabId, widgetId)
+	if err != nil {
+		return "", fmt.Errorf("resolving block: %w", err)
+	}
+
+	rpcClient := wshclient.GetBareRpcClient()
+	blockInfo, err := wshclient.BlockInfoCommand(rpcClient, fullBlockId, nil)
+	if err != nil {
+		return "", fmt.Errorf("getting block info: %w", err)
+	}
+
+	data := wshrpc.CommandWebSelectorData{
+		WorkspaceId: blockInfo.WorkspaceId,
+		BlockId:     fullBlockId,
+		TabId:       blockInfo.TabId,
+		Selector:    "body",
+		Opts:        &wshrpc.WebSelectorOpts{ExecJs: js},
+	}
+	results, err := wshclient.WebSelectorCommand(rpcClient, data, &wshrpc.RpcOpts{
+		Route:   wshutil.ElectronRoute,
+		Timeout: 10000,
+	})
+	if err != nil {
+		return "", fmt.Errorf("executing JS: %w", err)
+	}
+	if len(results) == 0 {
+		return "", fmt.Errorf("no result from JS execution")
+	}
+
+	text := strings.Join(results, "\n")
+	const maxLen = 50000
+	if len(text) > maxLen {
+		text = text[:maxLen] + "\n... [truncated]"
+	}
+	return text, nil
+}
+
+func GetWebClickToolDefinition(tabId string) uctypes.ToolDefinition {
+	return uctypes.ToolDefinition{
+		Name:             "web_click",
+		DisplayName:      "Click Web Element",
+		Description:      "Click an element on the web page by CSS selector. For links (<a> tags), navigates to the href URL. For other elements, triggers a click event.",
+		ShortDescription: "Click element in web widget",
+		ToolLogName:      "web:click",
+		Strict:           true,
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"widget_id": map[string]any{
+					"type":        "string",
+					"description": "8-character widget ID of the web browser widget",
+				},
+				"selector": map[string]any{
+					"type":        "string",
+					"description": "CSS selector of the element to click (e.g. 'button#submit', 'a.nav-link', '.btn-primary')",
+				},
+			},
+			"required":             []string{"widget_id", "selector"},
+			"additionalProperties": false,
+		},
+		ToolCallDesc: func(input any, output any, _ *uctypes.UIMessageDataToolUse) string {
+			inputMap, _ := input.(map[string]any)
+			widgetId, _ := inputMap["widget_id"].(string)
+			selector, _ := inputMap["selector"].(string)
+			return fmt.Sprintf("clicking %q in web widget %s", selector, widgetId)
+		},
+		ToolTextCallback: func(input any) (string, error) {
+			inputMap, ok := input.(map[string]any)
+			if !ok {
+				return "", fmt.Errorf("invalid input format")
+			}
+			widgetId, _ := inputMap["widget_id"].(string)
+			if widgetId == "" {
+				return "", fmt.Errorf("widget_id is required")
+			}
+			selector, _ := inputMap["selector"].(string)
+			if selector == "" {
+				return "", fmt.Errorf("selector is required")
+			}
+			js := fmt.Sprintf(`
+				const el = document.querySelector(%q);
+				if (!el) return 'error: no element found for selector %s';
+				const desc = (el.tagName || '') + (el.id ? '#'+el.id : '') + (el.className ? '.'+el.className.split(' ').join('.') : '');
+				// For links, navigate directly since el.click() may not trigger navigation in webview
+				const anchor = el.closest('a[href]') || (el.tagName === 'A' && el.href ? el : null);
+				if (anchor && anchor.href) {
+					window.location.href = anchor.href;
+					return 'navigating to ' + anchor.href + ' (clicked ' + desc + ')';
+				}
+				el.click();
+				return 'clicked ' + desc;
+			`, selector, selector)
+			return webExecJsOnWidget(tabId, widgetId, js)
+		},
+	}
+}
+
+// webMouseClickOnWidget sends a native mouse click via Electron's sendInputEvent.
+// Uses CSS selector to find the element position, then clicks at its center.
+func webMouseClickOnWidget(tabId string, widgetId string, selector string) (string, error) {
+	ctx, cancelFn := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelFn()
+
+	fullBlockId, err := wcore.ResolveBlockIdFromPrefix(ctx, tabId, widgetId)
+	if err != nil {
+		return "", fmt.Errorf("resolving block: %w", err)
+	}
+
+	rpcClient := wshclient.GetBareRpcClient()
+	blockInfo, err := wshclient.BlockInfoCommand(rpcClient, fullBlockId, nil)
+	if err != nil {
+		return "", fmt.Errorf("getting block info: %w", err)
+	}
+
+	data := wshrpc.CommandWebSelectorData{
+		WorkspaceId: blockInfo.WorkspaceId,
+		BlockId:     fullBlockId,
+		TabId:       blockInfo.TabId,
+		Selector:    selector,
+		Opts:        &wshrpc.WebSelectorOpts{MouseClick: true},
+	}
+	results, err := wshclient.WebSelectorCommand(rpcClient, data, &wshrpc.RpcOpts{
+		Route:   wshutil.ElectronRoute,
+		Timeout: 10000,
+	})
+	if err != nil {
+		return "", fmt.Errorf("mouse click: %w", err)
+	}
+	if len(results) == 0 {
+		return "", fmt.Errorf("no result from mouse click")
+	}
+	return results[0], nil
+}
+
+// webMouseClickXYOnWidget sends a native mouse click at specific x,y coordinates.
+// Use for clicking inside iframes or elements that can't be found by CSS selector.
+func webMouseClickXYOnWidget(tabId string, widgetId string, x int, y int) (string, error) {
+	ctx, cancelFn := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelFn()
+
+	fullBlockId, err := wcore.ResolveBlockIdFromPrefix(ctx, tabId, widgetId)
+	if err != nil {
+		return "", fmt.Errorf("resolving block: %w", err)
+	}
+
+	rpcClient := wshclient.GetBareRpcClient()
+	blockInfo, err := wshclient.BlockInfoCommand(rpcClient, fullBlockId, nil)
+	if err != nil {
+		return "", fmt.Errorf("getting block info: %w", err)
+	}
+
+	data := wshrpc.CommandWebSelectorData{
+		WorkspaceId: blockInfo.WorkspaceId,
+		BlockId:     fullBlockId,
+		TabId:       blockInfo.TabId,
+		Selector:    fmt.Sprintf("__xy:%d:%d", x, y),
+		Opts:        &wshrpc.WebSelectorOpts{MouseClick: true},
+	}
+	results, err := wshclient.WebSelectorCommand(rpcClient, data, &wshrpc.RpcOpts{
+		Route:   wshutil.ElectronRoute,
+		Timeout: 10000,
+	})
+	if err != nil {
+		return "", fmt.Errorf("mouse click at (%d,%d): %w", x, y, err)
+	}
+	if len(results) == 0 {
+		return "", fmt.Errorf("no result from mouse click")
+	}
+	return results[0], nil
+}
+
+func GetWebMouseClickToolDefinition(tabId string) uctypes.ToolDefinition {
+	return uctypes.ToolDefinition{
+		Name:             "web_mouse_click",
+		DisplayName:      "Mouse Click Web Element",
+		Description:      "Perform a native mouse click on a web page element. Unlike web_click which uses JavaScript click(), this dispatches a real mouse event that works with iframes (e.g. reCAPTCHA), embedded widgets, and elements that ignore synthetic clicks. You can click by CSS selector OR by x,y coordinates. Use coordinates when the target is inside an iframe.",
+		ShortDescription: "Native mouse click in web widget",
+		ToolLogName:      "web:mouseclick",
+		Strict:           true,
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"widget_id": map[string]any{
+					"type":        "string",
+					"description": "8-character widget ID of the web browser widget",
+				},
+				"selector": map[string]any{
+					"type":        "string",
+					"description": "CSS selector of the element to click (e.g. 'button#submit'). Omit if using x/y coordinates.",
+				},
+				"x": map[string]any{
+					"type":        "integer",
+					"description": "X coordinate (pixels from left edge of the page) to click. Use with y for iframe elements. You can find coordinates using web_exec_js with getBoundingClientRect().",
+				},
+				"y": map[string]any{
+					"type":        "integer",
+					"description": "Y coordinate (pixels from top edge of the page) to click. Use with x for iframe elements.",
+				},
+			},
+			"required":             []string{"widget_id"},
+			"additionalProperties": false,
+		},
+		ToolCallDesc: func(input any, output any, _ *uctypes.UIMessageDataToolUse) string {
+			inputMap, _ := input.(map[string]any)
+			widgetId, _ := inputMap["widget_id"].(string)
+			selector, _ := inputMap["selector"].(string)
+			if selector != "" {
+				return fmt.Sprintf("mouse clicking %q in web widget %s", selector, widgetId)
+			}
+			x, _ := inputMap["x"].(float64)
+			y, _ := inputMap["y"].(float64)
+			return fmt.Sprintf("mouse clicking at (%d,%d) in web widget %s", int(x), int(y), widgetId)
+		},
+		ToolTextCallback: func(input any) (string, error) {
+			inputMap, ok := input.(map[string]any)
+			if !ok {
+				return "", fmt.Errorf("invalid input format")
+			}
+			widgetId, _ := inputMap["widget_id"].(string)
+			if widgetId == "" {
+				return "", fmt.Errorf("widget_id is required")
+			}
+			selector, _ := inputMap["selector"].(string)
+			xVal, hasX := inputMap["x"].(float64)
+			yVal, hasY := inputMap["y"].(float64)
+
+			if selector != "" {
+				return webMouseClickOnWidget(tabId, widgetId, selector)
+			}
+			if hasX && hasY {
+				return webMouseClickXYOnWidget(tabId, widgetId, int(xVal), int(yVal))
+			}
+			return "", fmt.Errorf("either 'selector' or both 'x' and 'y' coordinates are required")
+		},
+	}
+}
+
+func GetWebOpenToolDefinition(tabId string) uctypes.ToolDefinition {
+	return uctypes.ToolDefinition{
+		Name:             "web_open",
+		DisplayName:      "Open Web Browser Widget",
+		Description:      "Open a new web browser widget with the given URL. Use this when no web widget is open yet, or when you need a separate browser window for a different page.",
+		ShortDescription: "Open new web browser widget",
+		ToolLogName:      "web:open",
+		Strict:           true,
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"url": map[string]any{
+					"type":        "string",
+					"description": "URL to open in the new web browser widget",
+				},
+			},
+			"required":             []string{"url"},
+			"additionalProperties": false,
+		},
+		ToolCallDesc: func(input any, output any, _ *uctypes.UIMessageDataToolUse) string {
+			inputMap, _ := input.(map[string]any)
+			url, _ := inputMap["url"].(string)
+			return fmt.Sprintf("opening new web widget with URL %q", url)
+		},
+		ToolAnyCallback: func(input any, toolUseData *uctypes.UIMessageDataToolUse) (any, error) {
+			inputMap, ok := input.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("invalid input format")
+			}
+			url, _ := inputMap["url"].(string)
+			if url == "" {
+				return nil, fmt.Errorf("url is required")
+			}
+
+			ctx, cancelFn := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancelFn()
+
+			_ = ctx // context used implicitly by RPC
+			rpcClient := wshclient.GetBareRpcClient()
+			oref, err := wshclient.CreateBlockCommand(rpcClient, wshrpc.CommandCreateBlockData{
+				TabId: tabId,
+				BlockDef: &waveobj.BlockDef{
+					Meta: map[string]any{
+						waveobj.MetaKey_View: "web",
+						waveobj.MetaKey_Url:  url,
+					},
+				},
+				Focused: true,
+			}, nil)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create web widget: %w", err)
+			}
+
+			return map[string]any{
+				"widget_id": oref.OID[:8],
+				"url":       url,
+			}, nil
+		},
+	}
+}
+
+func GetWebTypeInputToolDefinition(tabId string) uctypes.ToolDefinition {
+	return uctypes.ToolDefinition{
+		Name:             "web_type_input",
+		DisplayName:      "Type Text Into Web Input",
+		Description:      "Type text into an input field, textarea, or contenteditable element on the web page. Focuses the element, clears its current value, and types the new text. Dispatches input and change events so frameworks detect the change.",
+		ShortDescription: "Type text into web input",
+		ToolLogName:      "web:typeinput",
+		Strict:           true,
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"widget_id": map[string]any{
+					"type":        "string",
+					"description": "8-character widget ID of the web browser widget",
+				},
+				"selector": map[string]any{
+					"type":        "string",
+					"description": "CSS selector of the input element (e.g. 'input[name=\"email\"]', '#search-box', 'textarea.comment')",
+				},
+				"text": map[string]any{
+					"type":        "string",
+					"description": "Text to type into the input field",
+				},
+				"clear": map[string]any{
+					"type":        "boolean",
+					"description": "Whether to clear the field before typing. Defaults to true.",
+				},
+			},
+			"required":             []string{"widget_id", "selector", "text", "clear"},
+			"additionalProperties": false,
+		},
+		ToolCallDesc: func(input any, output any, _ *uctypes.UIMessageDataToolUse) string {
+			inputMap, _ := input.(map[string]any)
+			widgetId, _ := inputMap["widget_id"].(string)
+			selector, _ := inputMap["selector"].(string)
+			text, _ := inputMap["text"].(string)
+			if len(text) > 40 {
+				text = text[:40] + "..."
+			}
+			return fmt.Sprintf("typing %q into %q in web widget %s", text, selector, widgetId)
+		},
+		ToolTextCallback: func(input any) (string, error) {
+			inputMap, ok := input.(map[string]any)
+			if !ok {
+				return "", fmt.Errorf("invalid input format")
+			}
+			widgetId, _ := inputMap["widget_id"].(string)
+			if widgetId == "" {
+				return "", fmt.Errorf("widget_id is required")
+			}
+			selector, _ := inputMap["selector"].(string)
+			if selector == "" {
+				return "", fmt.Errorf("selector is required")
+			}
+			text, _ := inputMap["text"].(string)
+			clear := true
+			if clearVal, ok := inputMap["clear"].(bool); ok {
+				clear = clearVal
+			}
+			js := fmt.Sprintf(`
+				const el = document.querySelector(%q);
+				if (!el) return 'error: no element found for selector %s';
+				el.focus();
+				const isFormEl = (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT');
+				if (%t) {
+					if (isFormEl) {
+						el.value = '';
+					} else if (el.isContentEditable) {
+						el.textContent = '';
+					}
+					el.dispatchEvent(new Event('input', { bubbles: true }));
+					el.dispatchEvent(new Event('change', { bubbles: true }));
+				}
+				const text = %q;
+				if (isFormEl) {
+					// Set value via property and attribute for maximum compatibility
+					el.value = (%t ? '' : (el.value || '')) + text;
+					el.setAttribute('value', el.value);
+					// Use native setter to trigger React/Vue/Angular internal state updates
+					const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype :
+						el.tagName === 'SELECT' ? HTMLSelectElement.prototype :
+						HTMLInputElement.prototype;
+					const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+					if (nativeSetter) {
+						nativeSetter.call(el, el.value);
+					}
+				} else if (el.isContentEditable) {
+					el.textContent = (%t ? '' : (el.textContent || '')) + text;
+				}
+				// Dispatch full sequence of events for framework compatibility
+				el.dispatchEvent(new Event('input', { bubbles: true }));
+				el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+				el.dispatchEvent(new Event('change', { bubbles: true }));
+				const val = isFormEl ? el.value : el.textContent;
+				return 'typed into ' + el.tagName + (el.id ? '#'+el.id : '') + ' (value: ' + (val || '').slice(0, 50) + ')';
+			`, selector, selector, clear, text, clear, clear)
+			return webExecJsOnWidget(tabId, widgetId, js)
+		},
+	}
+}
+
+func GetWebPressKeyToolDefinition(tabId string) uctypes.ToolDefinition {
+	return uctypes.ToolDefinition{
+		Name:             "web_press_key",
+		DisplayName:      "Press Key in Web Widget",
+		Description:      "Simulate a key press on the web page. Dispatches keydown, keypress, and keyup events on the focused element (or a specific element if selector is provided). Common keys: 'Enter', 'Tab', 'Escape', 'ArrowDown', 'ArrowUp', 'Backspace', 'Delete', or any single character.",
+		ShortDescription: "Press key in web widget",
+		ToolLogName:      "web:presskey",
+		Strict:           true,
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"widget_id": map[string]any{
+					"type":        "string",
+					"description": "8-character widget ID of the web browser widget",
+				},
+				"key": map[string]any{
+					"type":        "string",
+					"description": "Key to press (e.g. 'Enter', 'Tab', 'Escape', 'ArrowDown', 'a', '1')",
+				},
+				"selector": map[string]any{
+					"type":        "string",
+					"description": "Optional CSS selector of element to send the key to. Defaults to the currently focused element.",
+				},
+			},
+			"required":             []string{"widget_id", "key", "selector"},
+			"additionalProperties": false,
+		},
+		ToolCallDesc: func(input any, output any, _ *uctypes.UIMessageDataToolUse) string {
+			inputMap, _ := input.(map[string]any)
+			widgetId, _ := inputMap["widget_id"].(string)
+			key, _ := inputMap["key"].(string)
+			selector, _ := inputMap["selector"].(string)
+			if selector != "" {
+				return fmt.Sprintf("pressing %q on %q in web widget %s", key, selector, widgetId)
+			}
+			return fmt.Sprintf("pressing %q in web widget %s", key, widgetId)
+		},
+		ToolTextCallback: func(input any) (string, error) {
+			inputMap, ok := input.(map[string]any)
+			if !ok {
+				return "", fmt.Errorf("invalid input format")
+			}
+			widgetId, _ := inputMap["widget_id"].(string)
+			if widgetId == "" {
+				return "", fmt.Errorf("widget_id is required")
+			}
+			key, _ := inputMap["key"].(string)
+			if key == "" {
+				return "", fmt.Errorf("key is required")
+			}
+			selector, _ := inputMap["selector"].(string)
+			var targetExpr string
+			if selector != "" {
+				targetExpr = fmt.Sprintf("document.querySelector(%q) || document.activeElement || document.body", selector)
+			} else {
+				targetExpr = "document.activeElement || document.body"
+			}
+			js := fmt.Sprintf(`
+				const target = %s;
+				const key = %q;
+				const opts = { key: key, code: 'Key' + key.toUpperCase(), bubbles: true, cancelable: true };
+				if (key === 'Enter') opts.code = 'Enter';
+				else if (key === 'Tab') opts.code = 'Tab';
+				else if (key === 'Escape') opts.code = 'Escape';
+				else if (key === 'Backspace') opts.code = 'Backspace';
+				else if (key === 'Delete') opts.code = 'Delete';
+				else if (key.startsWith('Arrow')) opts.code = key;
+				else if (key === ' ') opts.code = 'Space';
+				target.dispatchEvent(new KeyboardEvent('keydown', opts));
+				target.dispatchEvent(new KeyboardEvent('keypress', opts));
+				target.dispatchEvent(new KeyboardEvent('keyup', opts));
+				if (key === 'Enter' && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
+					const form = target.closest('form');
+					if (form && target.tagName === 'INPUT') {
+						form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+					}
+				}
+				return 'pressed ' + key + ' on ' + target.tagName + (target.id ? '#'+target.id : '');
+			`, targetExpr, key)
+			return webExecJsOnWidget(tabId, widgetId, js)
 		},
 	}
 }
