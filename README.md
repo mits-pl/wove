@@ -8,65 +8,81 @@
 
 # Wove
 
-**The AI-first terminal for developers who code, not click.**
+**Local, autonomous developer agent with built-in browser and computer vision.**
 
-Built on the [Wave Terminal](https://github.com/wavetermdev/waveterm) engine. Wove adds deep project intelligence, MCP integration, execution planning, and multi-model support — turning your terminal into an AI development environment.
+Wove is not a terminal with an AI chat. It's an autonomous agent that sees your screen, browses the web, runs commands, delegates sub-tasks, and orchestrates multi-step workflows — all running locally on your machine.
 
-## Why Wove?
+Built on the [Wave Terminal](https://github.com/wavetermdev/waveterm) engine (Go + Electron, Apache 2.0).
 
-| Feature | Standard terminals | Warp | Wove |
+## What makes Wove different
+
+| Capability | Cursor / Copilot | Claude Code | Wove |
 |---|---|---|---|
-| AI chat in terminal | Some | Yes | Yes |
-| AI reads your database schema | No | No | **Yes (MCP)** |
-| AI reads project conventions | No | Partial | **Yes (CLAUDE.md, WAVE.md)** |
-| AI creates execution plans | No | Basic | **Yes (with auto-tests, lint, review)** |
-| SEO audit tool | No | No | **Yes** |
-| Session history across restarts | No | No | **Yes** |
-| Web page content reading | No | No | **Yes (text, HTML, JS)** |
-| Multi-model BYOK | Limited | Limited | **10 presets (3 clicks to add)** |
-| Open source | Some | No | **Yes (Apache 2.0)** |
+| Built-in browser with vision | No | No | **CDP capture + Set-of-Mark** |
+| Browser automation (click, type, navigate) | No | No | **Yes** |
+| Sub-task delegation (isolated context) | No | Yes (subagents) | **Yes (new tabs)** |
+| MCP native | No | Yes | **Yes (auto-detect)** |
+| Execution plans with persistence | No | No | **Yes** |
+| Project convention enforcement | Partial | .claude files | **WAVE.md + CLAUDE.md + .cursorrules** |
+| Skills system (on-demand tools) | No | Slash commands | **SKILL.md + autocomplete** |
+| Multi-model BYOK | Limited | Anthropic only | **10 presets, any provider** |
+| Runs locally, no cloud agent | IDE extension | CLI | **Desktop app** |
+| Open source | No | No | **Apache 2.0** |
 
-## Key Features
+## Core Capabilities
 
-### MCP Integration
-Connect to any [Model Context Protocol](https://modelcontextprotocol.io/) server. Wove auto-detects `.mcp.json` in your project and gives AI direct access to your database, documentation, and logs.
+### Computer Vision & Web Automation
+Wove sees web pages through CDP-based snapshots with Set-of-Mark numbered markers. The agent identifies interactive elements, reads content, and automates the browser:
 
-```json
-{
-  "mcpServers": {
-    "my-server": {
-      "command": "node",
-      "args": ["mcp-server.js"]
-    }
-  }
-}
+- **web_capture** — visual snapshot with numbered element markers and CSS selectors
+- **web_click** / **web_mouse_click** — click by selector or coordinates (CDP-based, works in iframes)
+- **web_type_input** — type into inputs with framework event dispatch
+- **web_exec_js** — execute JavaScript in page context
+- **web_open** / **web_navigate** — open and navigate browser widgets
+- **web_read_text** / **web_read_html** — extract content by CSS selector
+- **web_seo_audit** — full page audit (JSON-LD, OG, meta, headings, links)
+
+### Sub-task Orchestration
+Complex tasks (audits, migrations, multi-file refactors) are split into isolated sub-tasks. Each sub-task runs in a new tab with fresh context and full tool access, preventing context window overflow.
+
+```
+Parent task: "Full SEO audit of example.com"
+    |
+    +-- Sub-task 1: Technical audit → /tmp/seo/01-technical.md
+    +-- Sub-task 2: Content quality → /tmp/seo/02-content.md
+    +-- Sub-task 3: Schema markup  → /tmp/seo/03-schema.md
+    |
+    v
+Parent reads output files → generates consolidated report
 ```
 
-AI automatically queries your database schema before writing SQL, checks framework docs before suggesting patterns, and reads error logs before debugging.
+### MCP Integration
+Auto-detects `.mcp.json` in your project. AI gets direct access to your database schema, documentation, logs — any MCP-compatible data source.
 
 ### AI Planning System
-For code tasks, Wove creates detailed execution plans with:
+Multi-step execution plans with:
 - Concrete file paths and pattern references
-- Auto-appended steps: lint, review against project conventions, write tests, run tests
-- Live progress panel in the AI sidebar
-- Plans survive restarts — pick up where you left off
+- Auto-appended steps: lint, review, test
+- Live progress panel
+- Plans survive restarts
 
 ### Project Intelligence
-Wove reads your project's coding conventions (WAVE.md, CLAUDE.md, .cursorrules) and enforces them:
-- Tech stack injected into every request (AI knows it's Inertia, not axios)
-- Critical rules auto-extracted and always present
-- Project structure on first message
-- Smart section filtering by technology
+Reads WAVE.md, CLAUDE.md, .cursorrules automatically:
+- Tech stack injected into every request
+- Critical rules always present
+- Project tree on first message
+- Smart filtering by technology
 
-### Web Content Tools
-AI can navigate, read, and audit web pages:
-- **web_read_text** — clean text by CSS selector
-- **web_read_html** — raw HTML for structure inspection
-- **web_seo_audit** — JSON-LD, Open Graph, meta tags, headings, alt text, links
-- Visual highlight animation when AI reads page elements
+### Skills System
+Extensible skill definitions (SKILL.md files) with:
+- `invoke_skill` tool for on-demand loading
+- Slash command autocomplete in AI input (`/seo-audit`, `/seo-technical`, etc.)
+- Skills run autonomously end-to-end without confirmation prompts
+
+### Widget Ownership & Cleanup
+Agent tracks which terminals and browsers it created. Closes them when done. Cannot close user's pre-existing widgets.
 
 ### Multi-Model Support (BYOK)
-Bring your own API keys. Quick Add in 3 clicks:
 
 | Provider | Models |
 |---|---|
@@ -78,19 +94,16 @@ Bring your own API keys. Quick Add in 3 clicks:
 | OpenRouter | Any model |
 
 ### Session History
-AI remembers what you did in previous sessions. Chat history persists per tab, with a visual banner showing previous work.
-
-### Auto-approve File Reading
-Approve a directory once — AI reads files without asking each time. Sensitive paths (~/.ssh, ~/.aws, .env) are never auto-approved.
+Chat history persists per tab across restarts, with a visual banner showing previous work.
 
 ## Installation
 
-Wove works on macOS, Linux, and Windows.
+macOS, Linux, and Windows.
 
 ### Build from source
 
 ```bash
-git clone https://github.com/woveterm/wove.git
+git clone https://github.com/mits-pl/wove.git
 cd wove
 task init
 task dev
@@ -130,20 +143,23 @@ My App — Laravel 11, Inertia.js, Vue 3
 - Run vendor/bin/pint after changes
 ```
 
-## How It Works
+## Architecture
 
 ```
 User message
     |
     v
-[Project Stack] -> AI knows: "Laravel + Inertia + Vue"
-[Critical Rules] -> AI knows: "must write tests, must use PHPDoc"
-[Project Tree] -> AI knows: file structure
-[MCP Context] -> AI knows: database schema, app info
-[Active Plan] -> AI knows: what step to execute next
+[Project Stack] -> "Laravel + Inertia + Vue"
+[Critical Rules] -> "must write tests, must use PHPDoc"
+[MCP Context]   -> database schema, app info
+[Active Plan]   -> what step to execute next
     |
     v
-AI creates plan -> reads sibling files -> writes code -> reviews -> tests -> lint
+Agent: plan -> read code -> write -> review -> test -> lint
+    |
+    +-- needs web data? -> web_open -> web_capture -> web_read_text
+    +-- complex task? -> run_sub_task (isolated tab)
+    +-- done? -> close_widget (cleanup)
 ```
 
 ## Built On
