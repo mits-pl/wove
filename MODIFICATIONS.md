@@ -50,12 +50,49 @@ This document lists all modifications and additions made in Wove.
 
 ## Web Automation Tools
 - `web_click` — click element by CSS selector (follows links, dispatches click events)
-- `web_mouse_click` — native Electron mouse click via `sendInputEvent` (works with iframes, reCAPTCHA)
+- `web_mouse_click` — CDP-based `Input.dispatchMouseEvent` for reliable clicks inside iframes (replaced Electron `sendInputEvent`)
 - `web_type_input` — type text into input/textarea/contenteditable with framework event dispatch
 - `web_press_key` — simulate keydown/keypress/keyup events (Enter, Tab, Escape, arrows, etc.)
 - `web_exec_js` — execute arbitrary JavaScript in webview context (preserves page state)
-- `web_open` — open new web browser widget with URL
+- `web_open` — open new web browser widget with URL (registers widget ownership)
 - `web_navigate` — navigate existing web widget to URL
+- `close_widget` — close AI-created widgets with ownership enforcement (cannot close user's pre-existing widgets)
+
+## Sub-task System
+- `run_sub_task` tool — spawns isolated AI conversation in a new tab
+- Prevents context window overflow on complex multi-step tasks (audits, migrations)
+- Sub-task gets fresh context with access to all tools (terminal, web browser, etc.)
+- Results saved to file; only summary returned to parent
+- Nesting depth limit (max 2 levels)
+- `SubTaskUpdateData` event for real-time status updates
+- Auto-approve tools in sub-tasks (skip UI approval)
+
+## Tool Result Compaction
+- Automatic truncation of old tool results to prevent context overflow
+- Keeps 4 most recent tool results at full length
+- Older results truncated to 500 characters with `[truncated]` marker
+- `CompactToolResult` / `IsToolResultMessage` implemented across all backends (Anthropic, OpenAI, Gemini, OpenAI-chat)
+- `CompactOldToolResults` in ChatStore for centralized compaction
+
+## Widget Ownership Tracking
+- `OwnedWidgetSet` — thread-safe tracker for AI-created widgets
+- `web_open` registers created widgets in ownership set
+- `close_widget` tool with ownership enforcement
+- AI cannot close user's pre-existing widgets, only widgets it created
+- Supports auto-cleanup when sub-task finishes
+
+## Skills System
+- `invoke_skill` tool — replaces system prompt injection with on-demand skill loading
+- Slash command autocomplete dropdown in AI input with keyboard navigation (Arrow, Tab, Enter, Escape)
+- `/wave/ai/skills` HTTP endpoint for frontend to fetch skill manifests
+- Lazy skill fetching — only loaded when user types `/`
+- `SkillManifest` type with name, description, allowed tools, argument hints
+- Enhanced skill instructions: autonomous execution, no unnecessary confirmation prompts
+
+## Owner Profile
+- `get_owner_profile` tool — reads personal info from `~/.waveterm/owner.md`
+- Used for checkout, form filling, and tasks requiring personal information
+- Guides user to create profile if not found
 
 ## Session History
 - Chat history saved per tab at shutdown
@@ -83,17 +120,28 @@ This document lists all modifications and additions made in Wove.
 - Consolidated wave_utils multi-action tool
 - English-only code comments enforcement
 - Terminal commands reference (grep, find, php -l, pint)
+- Web browsing guidance — always use webview widget for search (user can follow along)
+- Web interaction — always `web_capture` before clicking for element selectors
+- Sub-task guidance — use `run_sub_task` for 3+ independent steps
+- Cleanup instructions — close terminals and browsers after finishing
+- Autonomous execution — never ask "should I continue?" during multi-step tasks
 
 ## Terminal Tool Improvements
 - `term_run_command` — event-driven output via `WatchRTInfoShellState` channel (replaced 250ms polling)
 - `term_send_input` — `press_enter` parameter for auto-appending carriage return
 - `term_send_input` — allow empty text (for sending just Enter)
 - `term_run_command` — show error when output cannot be read instead of empty result
+- xterm.js write buffer flush before reading terminal content (ensures latest data)
 
 ## Claude Code Integration
 - `wsh setrtinfo` command for setting runtime info fields from shell hooks
 - `claude:state` RTInfo field — Claude Code hooks notify Wove AI when Claude is idle/working
 - Event-driven RTInfo updates via `WatchRTInfoShellState` pub/sub channel
+
+## UI Enhancements
+- AI tool status display — thinking indicator shows which tool is running and completed count
+- Block header CSS wrapping for URL bar in web widgets
+- `web_capture` null safety — skip nodes with missing `nodeName` in CDP snapshots
 
 ## Quality & Reliability
 - Syntax highlighting fix in AI diff viewer (preserved file extensions)
@@ -105,6 +153,7 @@ This document lists all modifications and additions made in Wove.
 - Friendly error messages with Retry button
 - MCP client: mutex protection, read timeout, graceful shutdown
 - RPC handler input validation for WebSelector opts
+- SSE write deadline reset made non-fatal (httptest compatibility)
 
 ## Based On
 - [Wave Terminal](https://github.com/wavetermdev/waveterm) by Command Line Inc.
