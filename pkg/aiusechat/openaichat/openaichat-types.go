@@ -6,6 +6,7 @@ package openaichat
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 
 	"github.com/woveterm/wove/pkg/aiusechat/uctypes"
 )
@@ -242,6 +243,22 @@ func (m *StoredChatMessage) GetUsage() *uctypes.AIUsage {
 		InputTokens:  m.Usage.InputTokens,
 		OutputTokens: m.Usage.OutputTokens,
 	}
+}
+
+func (m *StoredChatMessage) IsToolResultMessage() bool {
+	return m.Message.Role == "tool"
+}
+
+func (m *StoredChatMessage) CompactToolResult(maxLen int) bool {
+	if m.Message.Role != "tool" {
+		return false
+	}
+	if len(m.Message.Content) <= maxLen {
+		return false
+	}
+	origLen := len(m.Message.Content)
+	m.Message.Content = m.Message.Content[:maxLen] + fmt.Sprintf("\n...[truncated, %d chars total]", origLen)
+	return true
 }
 
 func (m *StoredChatMessage) Copy() *StoredChatMessage {

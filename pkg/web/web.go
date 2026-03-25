@@ -467,6 +467,9 @@ func RunWebServer(listener net.Listener) {
 	waveRouter.HandleFunc("/wave/plan/status", WebFnWrap(WebFnOpts{JsonErrors: true}, aiplan.HandlePlanStatus))
 	waveRouter.HandleFunc("/wave/plan/delete", WebFnWrap(WebFnOpts{JsonErrors: true}, aiplan.HandlePlanDelete))
 
+	// Skills endpoint
+	waveRouter.HandleFunc("/wave/ai/skills", WebFnWrap(WebFnOpts{JsonErrors: true}, aiusechat.WaveAIGetSkillsHandler))
+
 	// MCP client API endpoints
 	waveRouter.HandleFunc("/wave/mcp/status", WebFnWrap(WebFnOpts{JsonErrors: true}, mcpclient.HandleMCPStatus))
 	waveRouter.HandleFunc("/wave/mcp/call", WebFnWrap(WebFnOpts{JsonErrors: true}, mcpclient.HandleMCPCall))

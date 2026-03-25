@@ -135,7 +135,7 @@ func FormatSkillInvocation(skill *LoadedSkill, rawArgs string) string {
 	}
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("<skill name=%q arguments=%q>\n", skill.Manifest.Name, rawArgs))
-	sb.WriteString("Follow these instructions carefully.\n\n")
+	sb.WriteString("Follow these instructions carefully. Execute ALL phases/steps in order from start to finish. Do NOT skip phases. If a phase says to ask the user a question and wait for a response, you MUST do so — that is part of the skill flow. But NEVER ask unnecessary questions like \"should I continue?\", \"what would you like next?\", \"shall I proceed?\" — just continue to the next step. Complete the ENTIRE task end-to-end.\n\n")
 	sb.WriteString("IMPORTANT: All tools mentioned in this skill (web_open, web_read_text, web_read_html, web_seo_audit, web_exec_js, web_click, web_type_input, web_press_key, term_run_command, etc.) are AI tool calls that you invoke directly — they are NOT shell commands. Do NOT use bash/terminal to run them. Do NOT use sleep, curl, or other CLI tools when a dedicated AI tool exists. Call the tools by their function name as tool invocations.\n\n")
 	sb.WriteString(body)
 	sb.WriteString("\n</skill>")

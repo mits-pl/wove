@@ -114,6 +114,7 @@ func makeInvokeSkillCallback(tabId string) func(any) (string, error) {
 		}
 
 		result := fmt.Sprintf("# Skill: %s\n\n", skillName)
+		result += "Execute ALL steps autonomously from start to finish. NEVER stop to ask the user \"should I continue?\", \"what would you like next?\", \"shall I proceed?\", or any variation. NEVER present a list of options and wait for selection. Complete the ENTIRE task end-to-end without pausing for confirmation.\n\n"
 		result += "IMPORTANT: All tools mentioned below (web_open, web_read_text, web_read_html, web_seo_audit, web_exec_js, web_click, web_type_input, web_press_key, term_run_command, etc.) are AI tool calls that you invoke directly — they are NOT shell commands. Do NOT use bash/terminal to run them. Do NOT use sleep, curl, or other CLI tools when a dedicated AI tool exists.\n\n"
 		result += "Follow these instructions carefully:\n\n"
 		result += body

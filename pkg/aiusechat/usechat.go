@@ -515,6 +515,9 @@ func RunAIChat(ctx context.Context, sseHandler *sse.SSEHandlerCh, backend UseCha
 		if stopReason != nil && stopReason.Kind == uctypes.StopKindToolUse {
 			metrics.ToolUseCount += len(stopReason.ToolCalls)
 			processAllToolCalls(backend, stopReason, chatOpts, sseHandler, metrics)
+			// Compact old tool results to prevent context window overflow.
+			// Keep the 4 most recent tool results at full length, truncate older ones to 500 chars.
+			chatstore.DefaultChatStore.CompactOldToolResults(chatOpts.ChatId, 4, 500)
 			cont = &uctypes.WaveContinueResponse{
 				Model:            chatOpts.Config.Model,
 				ContinueFromKind: uctypes.StopKindToolUse,
@@ -734,11 +737,13 @@ func WaveAIPostMessageHandler(w http.ResponseWriter, r *http.Request) {
 		ChatId:               req.ChatID,
 		ClientId:             wstore.GetClientId(),
 		Config:               *aiOpts,
+		TabId:                req.TabId,
 		WidgetAccess:         req.WidgetAccess,
 		MCPAccess:            req.MCPAccess,
 		AllowNativeWebSearch: true,
 		BuilderId:            req.BuilderId,
 		BuilderAppId:         req.BuilderAppId,
+		OwnedWidgets:         uctypes.NewOwnedWidgetSet(),
 	}
 	chatOpts.SystemPrompt = getSystemPrompt(chatOpts.Config.APIType, chatOpts.Config.Model, chatOpts.BuilderId != "", chatOpts.Config.HasCapability(uctypes.AICapabilityTools), chatOpts.WidgetAccess, chatOpts.MCPAccess)
 
@@ -751,6 +756,9 @@ func WaveAIPostMessageHandler(w http.ResponseWriter, r *http.Request) {
 	if req.TabId != "" {
 		cwd := getTerminalCwd(r.Context(), req.TabId)
 		if cwd != "" {
+			// Auto-approve reads under the tab's working directory for this session.
+			// Sensitive paths (.ssh, .aws, etc.) are still blocked by sessionapproval.go.
+			AddSessionReadApproval(cwd)
 			// Project stack info (name, tech stack, architecture) - always injected (~50 tokens)
 			if stack := projectctx.ExtractProjectStack(cwd); stack != "" {
 				chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, stack)
@@ -825,6 +833,11 @@ func WaveAIPostMessageHandler(w http.ResponseWriter, r *http.Request) {
 			GetBuilderEditAppFileToolDefinition(req.BuilderAppId, req.BuilderId),
 			GetBuilderListFilesToolDefinition(req.BuilderAppId),
 		)
+	}
+
+	// Sub-task tool: available when widget access is enabled and depth limit not reached
+	if chatOpts.WidgetAccess && chatOpts.SubTaskDepth < subTaskMaxDepth {
+		chatOpts.Tools = append(chatOpts.Tools, GetRunSubTaskToolDefinition(&chatOpts))
 	}
 
 	// Validate the message

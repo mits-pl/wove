@@ -8,7 +8,51 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 )
+
+// OwnedWidgetSet tracks which widgets (blocks) were created by a specific AI chat.
+// Thread-safe. Used to enforce ownership in close_widget and for auto-cleanup.
+type OwnedWidgetSet struct {
+	mu       sync.Mutex
+	widgets  map[string]bool // full blockId -> true
+}
+
+func NewOwnedWidgetSet() *OwnedWidgetSet {
+	return &OwnedWidgetSet{widgets: make(map[string]bool)}
+}
+
+// Add registers a widget as owned by this chat.
+func (s *OwnedWidgetSet) Add(blockId string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.widgets[blockId] = true
+}
+
+// Contains checks if a widget is owned by this chat.
+func (s *OwnedWidgetSet) Contains(blockId string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.widgets[blockId]
+}
+
+// Remove removes a widget from the owned set.
+func (s *OwnedWidgetSet) Remove(blockId string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.widgets, blockId)
+}
+
+// GetAll returns all owned widget IDs.
+func (s *OwnedWidgetSet) GetAll() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result := make([]string, 0, len(s.widgets))
+	for id := range s.widgets {
+		result = append(result, id)
+	}
+	return result
+}
 
 const DefaultAIEndpoint = "https://cfapi.waveterm.dev/api/waveai"
 const WaveAIEndpointEnvName = "WAVETERM_WAVEAI_ENDPOINT"
@@ -333,6 +377,11 @@ type GenAIMessage interface {
 	GetMessageId() string
 	GetUsage() *AIUsage
 	GetRole() string
+	// CompactToolResult truncates tool result content if this message contains tool results
+	// and any individual result exceeds maxLen characters. Returns true if any content was truncated.
+	CompactToolResult(maxLen int) bool
+	// IsToolResultMessage returns true if this message contains tool result content
+	IsToolResultMessage() bool
 }
 
 const (
@@ -362,6 +411,16 @@ type AIMessagePart struct {
 	URL        string `json:"url,omitempty"`
 	Size       int    `json:"size,omitempty"`
 	PreviewUrl string `json:"previewurl,omitempty"` // 128x128 webp data url for images
+}
+
+// GetText returns the first text content from message parts.
+func (m AIMessage) GetText() string {
+	for _, part := range m.Parts {
+		if part.Type == "text" {
+			return part.Text
+		}
+	}
+	return ""
 }
 
 type AIToolResult struct {
@@ -511,6 +570,15 @@ type WaveChatOpts struct {
 	AllowNativeWebSearch bool
 	BuilderId            string
 	BuilderAppId         string
+
+	// Sub-task configuration
+	AutoApproveTools bool // skip UI approval for tools (sub-tasks)
+	SubTaskDepth     int  // nesting depth, 0 = top-level
+
+	// Widget ownership tracking — tracks which widgets this chat created.
+	// close_widget only allows closing widgets in this set (prevents closing user's pre-existing widgets).
+	// Used for auto-cleanup when subtask finishes.
+	OwnedWidgets *OwnedWidgetSet
 
 	// ephemeral to the step
 	TabState       string

@@ -371,8 +371,7 @@ func GetWebExecJsToolDefinition(tabId string) uctypes.ToolDefinition {
 			if code == "" {
 				return "", fmt.Errorf("code is required")
 			}
-			parsed := &webSelectorInput{WidgetId: widgetId, Selector: "body"}
-			return webReadContent(tabId, parsed, &wshrpc.WebSelectorOpts{ExecJs: code})
+			return webExecJsOnWidget(tabId, widgetId, code)
 		},
 	}
 }
@@ -594,7 +593,7 @@ func GetWebMouseClickToolDefinition(tabId string) uctypes.ToolDefinition {
 		Description:      "Perform a native mouse click on a web page element. Unlike web_click which uses JavaScript click(), this dispatches a real mouse event that works with iframes (e.g. reCAPTCHA), embedded widgets, and elements that ignore synthetic clicks. You can click by CSS selector OR by x,y coordinates. Use coordinates when the target is inside an iframe.",
 		ShortDescription: "Native mouse click in web widget",
 		ToolLogName:      "web:mouseclick",
-		Strict:           true,
+		Strict:           false,
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -615,8 +614,7 @@ func GetWebMouseClickToolDefinition(tabId string) uctypes.ToolDefinition {
 					"description": "Y coordinate (pixels from top edge of the page) to click. Use with x for iframe elements.",
 				},
 			},
-			"required":             []string{"widget_id"},
-			"additionalProperties": false,
+			"required": []string{"widget_id"},
 		},
 		ToolCallDesc: func(input any, output any, _ *uctypes.UIMessageDataToolUse) string {
 			inputMap, _ := input.(map[string]any)
@@ -653,7 +651,11 @@ func GetWebMouseClickToolDefinition(tabId string) uctypes.ToolDefinition {
 	}
 }
 
-func GetWebOpenToolDefinition(tabId string) uctypes.ToolDefinition {
+func GetWebOpenToolDefinition(tabId string, ownedWidgets ...*uctypes.OwnedWidgetSet) uctypes.ToolDefinition {
+	var owned *uctypes.OwnedWidgetSet
+	if len(ownedWidgets) > 0 {
+		owned = ownedWidgets[0]
+	}
 	return uctypes.ToolDefinition{
 		Name:             "web_open",
 		DisplayName:      "Open Web Browser Widget",
@@ -704,6 +706,11 @@ func GetWebOpenToolDefinition(tabId string) uctypes.ToolDefinition {
 			}, nil)
 			if err != nil {
 				return nil, fmt.Errorf("failed to create web widget: %w", err)
+			}
+
+			// Register widget as owned by this chat
+			if owned != nil {
+				owned.Add(oref.OID)
 			}
 
 			return map[string]any{

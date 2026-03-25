@@ -215,7 +215,13 @@ func GenerateTabStateAndTools(ctx context.Context, tabid string, widgetAccess bo
 			tools = append(tools, GetWebPressKeyToolDefinition(tabid))
 		}
 		// web_open is always available (doesn't require an existing web widget)
-		tools = append(tools, GetWebOpenToolDefinition(tabid))
+		tools = append(tools, GetWebOpenToolDefinition(tabid, chatOpts.OwnedWidgets))
+
+		// close_widget is always available (with ownership enforcement)
+		tools = append(tools, GetCloseWidgetToolDefinition(tabid, chatOpts.OwnedWidgets))
+
+		// owner profile is always available
+		tools = append(tools, GetOwnerProfileToolDefinition())
 
 		// Skill invocation tool (only if skills are available)
 		skillTool := GetInvokeSkillToolDefinition(tabid)

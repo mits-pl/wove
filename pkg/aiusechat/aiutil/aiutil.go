@@ -262,7 +262,9 @@ func CreateToolUseData(toolCallID, toolName string, arguments string, chatOpts u
 		toolUseData.ToolDesc = toolDef.ToolCallDesc(parsedArgs, nil, nil)
 	}
 
-	if toolDef.ToolApproval != nil {
+	if chatOpts.AutoApproveTools {
+		toolUseData.Approval = uctypes.ApprovalAutoApproved
+	} else if toolDef.ToolApproval != nil {
 		toolUseData.Approval = toolDef.ToolApproval(parsedArgs)
 	}
 

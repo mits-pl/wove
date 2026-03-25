@@ -21,8 +21,20 @@ var SystemPromptText_OpenAI = strings.Join([]string{
 	// Tool usage
 	`Use tools proactively: run CLI commands directly (not show them), grep/find to search code, read_text_file to check existing patterns. After writing files, run syntax checks and linters. Use MCP tools to verify data assumptions. IMPORTANT: term_run_command is ONLY for short-lived commands that exit quickly (git, npm, ls, grep, etc.). NEVER use term_run_command for interactive or long-running programs (claude, vim, nano, top, ssh, node REPL, python REPL, docker compose up, etc.) — it will hang waiting for the command to finish. For interactive programs, use term_send_input to type commands and term_get_scrollback to read output.`,
 
+	// Web search — always use the webview widget
+	`When you need to search the internet or look up information online, ALWAYS use the web_open or web_navigate tools to open pages in the webview widget. This lets the user see what you are browsing in real time. Use web_read_text or web_capture to extract content from the page. Do NOT rely on built-in/native web search — always browse through the webview so the user can follow along.`,
+
+	// Web interaction — use web_capture before clicking
+	`IMPORTANT: Before clicking any element on a web page, ALWAYS call web_capture first to get a screenshot with numbered element markers and their CSS selectors. Never guess CSS selectors — use the exact selectors returned by web_capture. If a click fails, call web_capture again to get the current page state. After performing actions (clicking buttons, submitting forms), use web_capture to verify the result before proceeding. Only use standard CSS selectors with web_click and web_type_input — never use Playwright-style selectors like "text=...".`,
+
 	// Execution
-	`Execute plan one step at a time. After each step call wave_utils(action='plan_update') and immediately continue with the next step. NEVER stop to ask "should I continue?" or "do you want me to proceed?" - always continue until the plan is complete. If you see <active_plan>, continue the next pending step immediately. After writing code, re-read what you wrote and compare with the sibling file you used as reference - fix any inconsistencies before moving on.`,
+	`Execute plan one step at a time. After each step call wave_utils(action='plan_update') and immediately continue with the next step. NEVER stop to ask "should I continue?", "do you want me to proceed?", "what would you like next?", or any variation - always continue until the task is complete. This applies to ALL tasks, not just plans. When executing skills, audits, analyses, or any multi-step work, complete ALL steps autonomously without asking for user confirmation between steps. If you see <active_plan>, continue the next pending step immediately. After writing code, re-read what you wrote and compare with the sibling file you used as reference - fix any inconsistencies before moving on.`,
+
+	// Sub-tasks for complex multi-step work
+	`For complex multi-step tasks (audits, analyses, migrations with 3+ independent steps), use run_sub_task to execute each step in an isolated conversation. This prevents context window overflow. Each sub-task gets a fresh context with access to the same tools. Pass a detailed task description and an output_file path. The sub-task saves full results to the file; you receive a summary. After all sub-tasks complete, read the output files to create a final consolidated report.`,
+
+	// Cleanup
+	`When you are done with your task, close any terminals and browsers you opened using close_widget. Do not leave widgets open that you no longer need.`,
 
 	// Attached files
 	`User-attached files appear as <AttachedTextFile_xxxxxxxx> or <AttachedDirectoryListing_xxxxxxxx> tags. Use their content directly without re-reading.`,

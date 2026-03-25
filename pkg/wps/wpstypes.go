@@ -35,6 +35,7 @@ const (
 	Event_BlockJobStatus      = "block:jobstatus"      // type: wshrpc.BlockJobStatusData
 	Event_Badge               = "badge"                // type: baseds.BadgeEvent
 	Event_RTInfoUpdate        = "rtinfo:update"        // type: *RTInfoUpdateData
+	Event_SubTaskUpdate       = "subtask:update"       // type: *SubTaskUpdateData
 )
 
 var AllEvents []string = []string{
@@ -91,6 +92,15 @@ type RTInfoUpdateData struct {
 	ShellLastCmd         string `json:"shell:lastcmd,omitempty"`
 	ShellLastCmdExitCode int    `json:"shell:lastcmdexitcode,omitempty"`
 	ClaudeState          string `json:"claude:state,omitempty"`
+}
+
+type SubTaskUpdateData struct {
+	ChatId    string `json:"chatid"`
+	ParentId  string `json:"parentid"`
+	Status    string `json:"status"`              // "running", "tool-use", "completed", "error"
+	ToolName  string `json:"toolname,omitempty"`
+	TextDelta string `json:"textdelta,omitempty"`
+	Summary   string `json:"summary,omitempty"`
 }
 
 type WSFileEventData struct {
