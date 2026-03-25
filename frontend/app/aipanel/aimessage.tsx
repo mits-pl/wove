@@ -233,7 +233,30 @@ const getThinkingMessage = (
         return null;
     }
 
-    return { message: "" };
+    // During tool execution, show which tool is running
+    const toolParts = parts.filter((p) => p.type === "data-tooluse");
+    if (toolParts.length > 0) {
+        const pendingParts = toolParts.filter((p) => p.data?.status === "pending");
+        const completedParts = toolParts.filter((p) => p.data?.status === "completed");
+
+        if (pendingParts.length > 0) {
+            // Tools are still executing
+            const lastPending = pendingParts[pendingParts.length - 1];
+            const toolDesc = lastPending.data?.tooldesc;
+            const toolName = lastPending.data?.toolname || "tool";
+            const displayDesc = toolDesc || toolName.replace(/_/g, " ");
+            return { message: `Running: ${displayDesc}` };
+        }
+
+        if (completedParts.length > 0) {
+            // All tools completed, model is processing results
+            return {
+                message: `Processing results (${completedParts.length} tool${completedParts.length > 1 ? "s" : ""} completed)...`,
+            };
+        }
+    }
+
+    return { message: "AI is thinking..." };
 };
 
 export const AIMessage = memo(({ message, isStreaming }: AIMessageProps) => {

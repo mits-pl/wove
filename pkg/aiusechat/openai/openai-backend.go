@@ -146,6 +146,21 @@ func (m *OpenAIChatMessage) GetRole() string {
 	return ""
 }
 
+func (m *OpenAIChatMessage) IsToolResultMessage() bool {
+	return m.FunctionCallOutput != nil
+}
+
+func (m *OpenAIChatMessage) CompactToolResult(maxLen int) bool {
+	if m.FunctionCallOutput == nil {
+		return false
+	}
+	if outputStr, ok := m.FunctionCallOutput.Output.(string); ok && len(outputStr) > maxLen {
+		m.FunctionCallOutput.Output = outputStr[:maxLen] + fmt.Sprintf("\n...[truncated, %d chars total]", len(outputStr))
+		return true
+	}
+	return false
+}
+
 func (m *OpenAIChatMessage) GetUsage() *uctypes.AIUsage {
 	if m.Usage == nil {
 		return nil

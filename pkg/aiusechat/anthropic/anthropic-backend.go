@@ -52,6 +52,29 @@ func (m *anthropicChatMessage) GetRole() string {
 	return m.Role
 }
 
+func (m *anthropicChatMessage) IsToolResultMessage() bool {
+	for _, block := range m.Content {
+		if block.Type == "tool_result" {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *anthropicChatMessage) CompactToolResult(maxLen int) bool {
+	truncated := false
+	for i, block := range m.Content {
+		if block.Type != "tool_result" {
+			continue
+		}
+		if contentStr, ok := block.Content.(string); ok && len(contentStr) > maxLen {
+			m.Content[i].Content = contentStr[:maxLen] + fmt.Sprintf("\n...[truncated, %d chars total]", len(contentStr))
+			truncated = true
+		}
+	}
+	return truncated
+}
+
 func (m *anthropicChatMessage) GetUsage() *uctypes.AIUsage {
 	if m.Usage == nil {
 		return nil

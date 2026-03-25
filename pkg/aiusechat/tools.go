@@ -199,13 +199,40 @@ func GenerateTabStateAndTools(ctx context.Context, tabid string, widgetAccess bo
 		if viewTypes["term"] {
 			tools = append(tools, GetTermGetScrollbackToolDefinition(tabid))
 			tools = append(tools, GetTermRunCommandToolDefinition(tabid))
+			tools = append(tools, GetTermSendInputToolDefinition(tabid))
 			// tools = append(tools, GetTermCommandOutputToolDefinition(tabid))
 		}
 		if viewTypes["web"] {
+			tools = append(tools, GetWebCaptureToolDefinition(tabid))
 			tools = append(tools, GetWebNavigateToolDefinition(tabid))
 			tools = append(tools, GetWebReadTextToolDefinition(tabid))
 			tools = append(tools, GetWebReadHTMLToolDefinition(tabid))
 			tools = append(tools, GetWebSEOAuditToolDefinition(tabid))
+			tools = append(tools, GetWebExecJsToolDefinition(tabid))
+			tools = append(tools, GetWebClickToolDefinition(tabid))
+			tools = append(tools, GetWebMouseClickToolDefinition(tabid))
+			tools = append(tools, GetWebTypeInputToolDefinition(tabid))
+			tools = append(tools, GetWebPressKeyToolDefinition(tabid))
+		}
+		// web_open is always available (doesn't require an existing web widget)
+		tools = append(tools, GetWebOpenToolDefinition(tabid, chatOpts.OwnedWidgets))
+
+		// close_widget is always available (with ownership enforcement)
+		tools = append(tools, GetCloseWidgetToolDefinition(tabid, chatOpts.OwnedWidgets))
+
+		// owner profile is always available
+		tools = append(tools, GetOwnerProfileToolDefinition())
+
+		// Skill invocation tool (only if skills are available)
+		skillTool := GetInvokeSkillToolDefinition(tabid)
+		if skillTool.InputSchema != nil {
+			if props, ok := skillTool.InputSchema["properties"].(map[string]any); ok {
+				if nameField, ok := props["name"].(map[string]any); ok {
+					if enumList, ok := nameField["enum"].([]any); ok && len(enumList) > 0 {
+						tools = append(tools, skillTool)
+					}
+				}
+			}
 		}
 	}
 	return tabState, tools, nil

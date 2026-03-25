@@ -240,6 +240,22 @@ func ConvertToolResultsToGeminiChatMessage(toolResults []uctypes.AIToolResult) (
 		if result.ErrorText != "" {
 			response["ok"] = false
 			response["error"] = result.ErrorText
+		} else if result.ImageUrl != "" && result.Text != "" {
+			// Multi-part result: text + image
+			response["ok"] = true
+			response["result"] = result.Text
+			mimeType, base64Data, err := utilfn.DecodeDataURL(result.ImageUrl)
+			if err == nil && strings.HasPrefix(mimeType, "image/") {
+				displayName := fmt.Sprintf("result_%s.%s", result.ToolUseID[:8], strings.TrimPrefix(mimeType, "image/"))
+				response["image"] = map[string]string{"$ref": displayName}
+				nestedParts = append(nestedParts, GeminiMessagePart{
+					InlineData: &GeminiInlineData{
+						MimeType:    mimeType,
+						Data:        base64.StdEncoding.EncodeToString(base64Data),
+						DisplayName: displayName,
+					},
+				})
+			}
 		} else if strings.HasPrefix(result.Text, "data:") {
 			mimeType, base64Data, err := utilfn.DecodeDataURL(result.Text)
 			if err != nil {

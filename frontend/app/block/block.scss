@@ -85,6 +85,28 @@
                 border-bottom: 1px solid var(--border-color);
                 border-radius: var(--block-border-radius) var(--block-border-radius) 0 0;
 
+                &:has(.block-frame-div-url) {
+                    flex-wrap: wrap;
+                    max-height: none;
+                    min-height: none;
+                    gap: 4px 8px;
+                    padding-bottom: 4px;
+
+                    .block-frame-default-header-iconview {
+                        order: 1;
+                        flex: 1 1 auto;
+                    }
+
+                    .block-frame-end-icons {
+                        order: 2;
+                    }
+
+                    .block-frame-textelems-wrapper {
+                        order: 3;
+                        flex-basis: 100%;
+                    }
+                }
+
                 .block-frame-default-header-iconview {
                     display: flex;
                     flex-shrink: 3;

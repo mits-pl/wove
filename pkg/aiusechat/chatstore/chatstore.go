@@ -123,6 +123,36 @@ func (cs *ChatStore) PostMessage(chatId string, aiOpts *uctypes.AIOptsType, mess
 	return nil
 }
 
+// CompactOldToolResults truncates tool result content for older messages to save context space.
+// It keeps the most recent keepRecentN tool result messages at full length and truncates
+// older ones to maxLen characters. Returns the number of messages that were truncated.
+func (cs *ChatStore) CompactOldToolResults(chatId string, keepRecentN int, maxLen int) int {
+	cs.lock.Lock()
+	defer cs.lock.Unlock()
+
+	chat := cs.chats[chatId]
+	if chat == nil {
+		return 0
+	}
+
+	// Count tool result messages from the end, truncate older ones
+	toolResultCount := 0
+	truncatedCount := 0
+	for i := len(chat.NativeMessages) - 1; i >= 0; i-- {
+		msg := chat.NativeMessages[i]
+		if !msg.IsToolResultMessage() {
+			continue
+		}
+		toolResultCount++
+		if toolResultCount > keepRecentN {
+			if msg.CompactToolResult(maxLen) {
+				truncatedCount++
+			}
+		}
+	}
+	return truncatedCount
+}
+
 func (cs *ChatStore) RemoveMessage(chatId string, messageId string) bool {
 	cs.lock.Lock()
 	defer cs.lock.Unlock()

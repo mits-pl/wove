@@ -32,6 +32,16 @@ import {
 } from "./ai-utils";
 import type { AIPanelInputRef } from "./aipanelinput";
 
+export type SkillManifest = {
+    name: string;
+    description: string;
+    allowedtools?: string[];
+    argumenthint?: string;
+    disablemodelinvocation?: boolean;
+    userinvocable: boolean;
+    filepath: string;
+};
+
 export interface DroppedFile {
     id: string;
     file: File;
@@ -79,6 +89,8 @@ export class WaveAIModel {
     >;
     restoreBackupStatus: jotai.PrimitiveAtom<"idle" | "processing" | "success" | "error"> = jotai.atom("idle");
     restoreBackupError: jotai.PrimitiveAtom<string> = jotai.atom(null) as jotai.PrimitiveAtom<string>;
+    skillsAtom: jotai.PrimitiveAtom<SkillManifest[]> = jotai.atom([]) as jotai.PrimitiveAtom<SkillManifest[]>;
+    private skillsFetched = false;
 
     private constructor(orefContext: ORef, inBuilder: boolean) {
         this.orefContext = orefContext;
@@ -424,6 +436,25 @@ export class WaveAIModel {
             oref: this.orefContext,
             meta: { "waveai:mcpcwd": cwd },
         });
+    }
+
+    async fetchSkills(): Promise<void> {
+        if (this.skillsFetched || this.inBuilder) return;
+        this.skillsFetched = true;
+        try {
+            const tabId = globalStore.get(atoms.staticTabId);
+            if (!tabId) return;
+            const resp = await fetch(
+                getWebServerEndpoint() + `/wave/ai/skills?tabid=${encodeURIComponent(tabId)}`
+            );
+            if (!resp.ok) return;
+            const data = await resp.json();
+            if (Array.isArray(data)) {
+                globalStore.set(this.skillsAtom, data);
+            }
+        } catch {
+            // Skills fetch is best-effort
+        }
     }
 
     isValidMode(mode: string): boolean {

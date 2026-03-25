@@ -1021,6 +1021,12 @@ func WaveInfoCommand(w *wshutil.WshRpc, opts *wshrpc.RpcOpts) (*wshrpc.WaveInfoD
 	return resp, err
 }
 
+// command "webcapture", wshserver.WebCaptureCommand
+func WebCaptureCommand(w *wshutil.WshRpc, data wshrpc.CommandWebCaptureData, opts *wshrpc.RpcOpts) (*wshrpc.WebCaptureRtnData, error) {
+	resp, err := sendRpcRequestCallHelper[*wshrpc.WebCaptureRtnData](w, "webcapture", data, opts)
+	return resp, err
+}
+
 // command "webselector", wshserver.WebSelectorCommand
 func WebSelectorCommand(w *wshutil.WshRpc, data wshrpc.CommandWebSelectorData, opts *wshrpc.RpcOpts) ([]string, error) {
 	resp, err := sendRpcRequestCallHelper[[]string](w, "webselector", data, opts)

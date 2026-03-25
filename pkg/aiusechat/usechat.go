@@ -23,6 +23,7 @@ import (
 	"github.com/woveterm/wove/pkg/aiusechat/chatstore"
 	"github.com/woveterm/wove/pkg/aiusechat/projectctx"
 	"github.com/woveterm/wove/pkg/aiusechat/sessionhistory"
+	"github.com/woveterm/wove/pkg/aiusechat/skills"
 	"github.com/woveterm/wove/pkg/aiusechat/uctypes"
 	"github.com/woveterm/wove/pkg/secretstore"
 	"github.com/woveterm/wove/pkg/telemetry"
@@ -44,6 +45,7 @@ const BuilderMaxTokens = 24 * 1024
 
 func init() {
 	sessionhistory.SaveAllCallback = saveAllSessionHistories
+	wstore.OnChatIdChangeCallback = onChatIdChange
 }
 
 var (
@@ -513,6 +515,9 @@ func RunAIChat(ctx context.Context, sseHandler *sse.SSEHandlerCh, backend UseCha
 		if stopReason != nil && stopReason.Kind == uctypes.StopKindToolUse {
 			metrics.ToolUseCount += len(stopReason.ToolCalls)
 			processAllToolCalls(backend, stopReason, chatOpts, sseHandler, metrics)
+			// Compact old tool results to prevent context window overflow.
+			// Keep the 4 most recent tool results at full length, truncate older ones to 500 chars.
+			chatstore.DefaultChatStore.CompactOldToolResults(chatOpts.ChatId, 4, 500)
 			cont = &uctypes.WaveContinueResponse{
 				Model:            chatOpts.Config.Model,
 				ContinueFromKind: uctypes.StopKindToolUse,
@@ -542,7 +547,7 @@ func ResolveToolCall(toolDef *uctypes.ToolDefinition, toolCall uctypes.WaveToolC
 		return
 	}
 
-	// Try ToolTextCallback first, then ToolAnyCallback
+	// Try ToolTextCallback first, then ToolImageTextCallback, then ToolAnyCallback
 	if toolDef.ToolTextCallback != nil {
 		text, err := toolDef.ToolTextCallback(toolCall.Input)
 		if err != nil {
@@ -550,6 +555,17 @@ func ResolveToolCall(toolDef *uctypes.ToolDefinition, toolCall uctypes.WaveToolC
 		} else {
 			result.Text = text
 			// Recompute tool description with the result
+			if toolDef.ToolCallDesc != nil && toolCall.ToolUseData != nil {
+				toolCall.ToolUseData.ToolDesc = toolDef.ToolCallDesc(toolCall.Input, text, toolCall.ToolUseData)
+			}
+		}
+	} else if toolDef.ToolImageTextCallback != nil {
+		text, imageUrl, err := toolDef.ToolImageTextCallback(toolCall.Input)
+		if err != nil {
+			result.ErrorText = err.Error()
+		} else {
+			result.Text = text
+			result.ImageUrl = imageUrl
 			if toolDef.ToolCallDesc != nil && toolCall.ToolUseData != nil {
 				toolCall.ToolUseData.ToolDesc = toolDef.ToolCallDesc(toolCall.Input, text, toolCall.ToolUseData)
 			}
@@ -721,11 +737,13 @@ func WaveAIPostMessageHandler(w http.ResponseWriter, r *http.Request) {
 		ChatId:               req.ChatID,
 		ClientId:             wstore.GetClientId(),
 		Config:               *aiOpts,
+		TabId:                req.TabId,
 		WidgetAccess:         req.WidgetAccess,
 		MCPAccess:            req.MCPAccess,
 		AllowNativeWebSearch: true,
 		BuilderId:            req.BuilderId,
 		BuilderAppId:         req.BuilderAppId,
+		OwnedWidgets:         uctypes.NewOwnedWidgetSet(),
 	}
 	chatOpts.SystemPrompt = getSystemPrompt(chatOpts.Config.APIType, chatOpts.Config.Model, chatOpts.BuilderId != "", chatOpts.Config.HasCapability(uctypes.AICapabilityTools), chatOpts.WidgetAccess, chatOpts.MCPAccess)
 
@@ -738,6 +756,9 @@ func WaveAIPostMessageHandler(w http.ResponseWriter, r *http.Request) {
 	if req.TabId != "" {
 		cwd := getTerminalCwd(r.Context(), req.TabId)
 		if cwd != "" {
+			// Auto-approve reads under the tab's working directory for this session.
+			// Sensitive paths (.ssh, .aws, etc.) are still blocked by sessionapproval.go.
+			AddSessionReadApproval(cwd)
 			// Project stack info (name, tech stack, architecture) - always injected (~50 tokens)
 			if stack := projectctx.ExtractProjectStack(cwd); stack != "" {
 				chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, stack)
@@ -761,6 +782,17 @@ func WaveAIPostMessageHandler(w http.ResponseWriter, r *http.Request) {
 				}
 				if len(hints) > 0 {
 					chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, "Context: "+strings.Join(hints, "; ")+".")
+				}
+			}
+
+			// Check if message is a direct skill invocation (/skill-name args)
+			// When user types /skill-name, inject the skill body directly into system prompt
+			// (the invoke_skill tool handles AI-initiated skill invocations)
+			if skillName, rawArgs, ok := skills.ParseSlashCommand(req.Msg.GetText()); ok {
+				if loaded, err := skills.LoadSkillContent(cwd, skillName); err == nil {
+					chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, skills.FormatSkillInvocation(loaded, rawArgs))
+				} else {
+					log.Printf("[skills] skill %q not found: %v\n", skillName, err)
 				}
 			}
 		}
@@ -801,6 +833,11 @@ func WaveAIPostMessageHandler(w http.ResponseWriter, r *http.Request) {
 			GetBuilderEditAppFileToolDefinition(req.BuilderAppId, req.BuilderId),
 			GetBuilderListFilesToolDefinition(req.BuilderAppId),
 		)
+	}
+
+	// Sub-task tool: available when widget access is enabled and depth limit not reached
+	if chatOpts.WidgetAccess && chatOpts.SubTaskDepth < subTaskMaxDepth {
+		chatOpts.Tools = append(chatOpts.Tools, GetRunSubTaskToolDefinition(&chatOpts))
 	}
 
 	// Validate the message
@@ -854,6 +891,23 @@ func WaveAIGetChatHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
 		return
 	}
+}
+
+// WaveAIGetSkillsHandler returns available skills for the given tab's CWD.
+func WaveAIGetSkillsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	tabId := r.URL.Query().Get("tabid")
+	if tabId == "" {
+		http.Error(w, "tabid parameter is required", http.StatusBadRequest)
+		return
+	}
+	cwd := getTerminalCwd(r.Context(), tabId)
+	manifests := skills.DiscoverSkills(cwd)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(manifests)
 }
 
 // CreateWriteTextFileDiff generates a diff for write_text_file or edit_text_file tool calls.
@@ -972,6 +1026,33 @@ func generateBuilderAppData(appId string) (string, string, string, error) {
 }
 
 // saveAllSessionHistories converts all in-memory chats to UIChat and saves as session history.
+// onChatIdChange is called when waveai:chatid changes (e.g. user starts a new chat).
+// It saves the old chat's session history so it's available in the next chat.
+func onChatIdChange(oref waveobj.ORef, oldChatId string) {
+	tabId := sessionhistory.GetTabForChat(oldChatId)
+	if tabId == "" {
+		// Try to derive tabId from oref (oref is typically tab:tabid)
+		if oref.OType == "tab" {
+			tabId = oref.OID
+		}
+	}
+	if tabId == "" {
+		return
+	}
+	aiChat := chatstore.DefaultChatStore.Get(oldChatId)
+	if aiChat == nil {
+		return
+	}
+	uiChat, err := ConvertAIChatToUIChat(aiChat)
+	if err != nil {
+		log.Printf("[sessionhistory] error converting chat %s on clear: %v\n", oldChatId[:8], err)
+		return
+	}
+	sessionhistory.SaveChatAsHistory(tabId, uiChat)
+	chatstore.DefaultChatStore.Delete(oldChatId)
+	log.Printf("[sessionhistory] saved history for chat %s (new chat started)\n", oldChatId[:8])
+}
+
 func saveAllSessionHistories() {
 	allChats := chatstore.DefaultChatStore.GetAll()
 	mappings := sessionhistory.GetAllMappings()

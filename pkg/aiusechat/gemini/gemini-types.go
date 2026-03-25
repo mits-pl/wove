@@ -4,6 +4,8 @@
 package gemini
 
 import (
+	"fmt"
+
 	"github.com/woveterm/wove/pkg/aiusechat/uctypes"
 )
 
@@ -25,6 +27,31 @@ func (m *GeminiChatMessage) GetMessageId() string {
 
 func (m *GeminiChatMessage) GetRole() string {
 	return m.Role
+}
+
+func (m *GeminiChatMessage) IsToolResultMessage() bool {
+	for _, part := range m.Parts {
+		if part.FunctionResponse != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *GeminiChatMessage) CompactToolResult(maxLen int) bool {
+	truncated := false
+	for i, part := range m.Parts {
+		if part.FunctionResponse == nil || part.FunctionResponse.Response == nil {
+			continue
+		}
+		if result, ok := part.FunctionResponse.Response["result"]; ok {
+			if resultStr, ok := result.(string); ok && len(resultStr) > maxLen {
+				m.Parts[i].FunctionResponse.Response["result"] = resultStr[:maxLen] + fmt.Sprintf("\n...[truncated, %d chars total]", len(resultStr))
+				truncated = true
+			}
+		}
+	}
+	return truncated
 }
 
 func (m *GeminiChatMessage) GetUsage() *uctypes.AIUsage {
