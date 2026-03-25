@@ -113,11 +113,15 @@ export class TermWshClient extends WshClient {
         if (!termWrap || !termWrap.terminal) {
             return {
                 totallines: 0,
-                linestart: data.linestart,
+                linestart: data.linestart ?? 0,
                 lines: [],
                 lastupdated: 0,
             };
         }
+
+        // Flush pending xterm.js writes so we read the latest data.
+        // terminal.write() is async — data may still be in the write queue.
+        await new Promise<void>((resolve) => termWrap.terminal.write("", resolve));
 
         const buffer = termWrap.terminal.buffer.active;
         const totalLines = buffer.length;

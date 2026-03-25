@@ -101,7 +101,9 @@ function processCdpSnapshot(snapshot: CdpSnapshot, viewportHeight: number): WebC
             const nodeType = nodes.nodeType[nodeIdx];
             if (nodeType !== 1) continue; // only Element nodes
 
-            const tag = strings[nodes.nodeName[nodeIdx].index].toUpperCase();
+            const nameEntry = nodes.nodeName[nodeIdx];
+            if (!nameEntry || strings[nameEntry.index] == null) continue;
+            const tag = strings[nameEntry.index].toUpperCase();
             // Skip non-meaningful tags
             if (["HTML", "HEAD", "BODY", "SCRIPT", "STYLE", "META", "LINK", "BR", "HR", "NOSCRIPT"].includes(tag)) continue;
 
@@ -267,8 +269,35 @@ export class ElectronWshClientType extends WshClient {
                 desc = pos.desc;
             }
 
-            wc.sendInputEvent({ type: "mouseDown", x, y, button: "left", clickCount: 1 });
-            wc.sendInputEvent({ type: "mouseUp", x, y, button: "left", clickCount: 1 });
+            try {
+                wc.debugger.attach("1.3");
+            } catch (e) {
+                throw new Error(
+                    "Cannot click: another debugger is attached (DevTools open?). Close DevTools and retry."
+                );
+            }
+            try {
+                await wc.debugger.sendCommand("Input.dispatchMouseEvent", {
+                    type: "mousePressed",
+                    x,
+                    y,
+                    button: "left",
+                    clickCount: 1,
+                });
+                await wc.debugger.sendCommand("Input.dispatchMouseEvent", {
+                    type: "mouseReleased",
+                    x,
+                    y,
+                    button: "left",
+                    clickCount: 1,
+                });
+            } finally {
+                try {
+                    wc.debugger.detach();
+                } catch {
+                    // ignore detach errors
+                }
+            }
             return [`mouse clicked ${desc} at (${x}, ${y})`];
         }
 
