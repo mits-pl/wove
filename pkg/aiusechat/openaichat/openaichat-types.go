@@ -17,11 +17,16 @@ type ChatRequest struct {
 	Model               string               `json:"model"`
 	Messages            []ChatRequestMessage `json:"messages"`
 	Stream              bool                 `json:"stream"`
+	StreamOptions       *StreamOptions       `json:"stream_options,omitempty"`
 	MaxTokens           int                  `json:"max_tokens,omitempty"`            // legacy
 	MaxCompletionTokens int                  `json:"max_completion_tokens,omitempty"` // newer
 	Temperature         float64              `json:"temperature,omitempty"`
 	Tools               []ToolDefinition     `json:"tools,omitempty"`       // if you use tools
 	ToolChoice          any                  `json:"tool_choice,omitempty"` // "auto", "none", or struct
+}
+
+type StreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 type ChatContentPart struct {
@@ -184,6 +189,7 @@ type StreamChunk struct {
 	Created int64          `json:"created"`
 	Model   string         `json:"model"`
 	Choices []StreamChoice `json:"choices"`
+	Usage   *ChatUsage     `json:"usage,omitempty"`
 }
 
 type StreamChoice struct {

@@ -92,6 +92,199 @@ func RunChatStep(
 	return stopReason, []*StoredChatMessage{assistantMsg}, nil, nil
 }
 
+// thinkTagParser tracks state for parsing <think>...</think> tags from a streaming content delta.
+// Tags may be split across multiple chunks, so we buffer potential partial tags.
+type thinkTagParser struct {
+	inThinking       bool            // currently inside <think> block
+	tagBuf           strings.Builder // buffering a potential tag boundary
+	contentBuilder   strings.Builder // full raw content (with tags) for storage
+	sseHandler       *sse.SSEHandlerCh
+	textID           string
+	reasoningID      string
+	textStarted      bool
+	reasoningStarted bool
+	parseThinkTags   bool // when false, all content is passed through as text (no think tag parsing)
+}
+
+func newThinkTagParser(sseHandler *sse.SSEHandlerCh, textID string, reasoningID string, parseThinkTags bool) *thinkTagParser {
+	return &thinkTagParser{
+		sseHandler:     sseHandler,
+		textID:         textID,
+		reasoningID:    reasoningID,
+		parseThinkTags: parseThinkTags,
+	}
+}
+
+const (
+	thinkOpenTag  = "<think>"
+	thinkCloseTag = "</think>"
+)
+
+// processChunk handles a content delta chunk, routing text to either reasoning or text SSE events.
+// It finds tag boundaries and emits text in batches (not character-by-character) to avoid
+// overwhelming the SSE channel buffer.
+func (p *thinkTagParser) processChunk(chunk string) {
+	p.contentBuilder.WriteString(chunk)
+
+	// When think tag parsing is disabled, pass all content through as text
+	if !p.parseThinkTags {
+		if !p.textStarted {
+			_ = p.sseHandler.AiMsgTextStart(p.textID)
+			p.textStarted = true
+		}
+		_ = p.sseHandler.AiMsgTextDelta(p.textID, chunk)
+		return
+	}
+
+	// Prepend any previously buffered partial tag content
+	if p.tagBuf.Len() > 0 {
+		chunk = p.tagBuf.String() + chunk
+		p.tagBuf.Reset()
+	}
+
+	for len(chunk) > 0 {
+		if p.inThinking {
+			// Inside <think> block, look for </think>
+			idx := strings.Index(chunk, thinkCloseTag)
+			if idx >= 0 {
+				// Found closing tag - emit reasoning before it, then switch mode
+				if idx > 0 {
+					p.emitReasoning(chunk[:idx])
+				}
+				chunk = chunk[idx+len(thinkCloseTag):]
+				p.inThinking = false
+				if p.reasoningStarted {
+					_ = p.sseHandler.AiMsgReasoningEnd(p.reasoningID)
+					p.reasoningStarted = false
+				}
+			} else {
+				// No complete closing tag - check if chunk ends with a partial match
+				partialLen := p.partialTagMatch(chunk, thinkCloseTag)
+				if partialLen > 0 {
+					// Emit everything except the potential partial tag
+					if len(chunk)-partialLen > 0 {
+						p.emitReasoning(chunk[:len(chunk)-partialLen])
+					}
+					p.tagBuf.WriteString(chunk[len(chunk)-partialLen:])
+				} else {
+					// No partial match, emit everything as reasoning
+					p.emitReasoning(chunk)
+				}
+				chunk = ""
+			}
+		} else {
+			// Outside <think> block, look for <think>
+			idx := strings.Index(chunk, thinkOpenTag)
+			if idx >= 0 {
+				// Found opening tag - emit text before it, then switch mode
+				if idx > 0 {
+					p.emitText(chunk[:idx])
+				}
+				chunk = chunk[idx+len(thinkOpenTag):]
+				p.inThinking = true
+			} else {
+				// No complete opening tag - check if chunk ends with a partial match
+				partialLen := p.partialTagMatch(chunk, thinkOpenTag)
+				if partialLen > 0 {
+					if len(chunk)-partialLen > 0 {
+						p.emitText(chunk[:len(chunk)-partialLen])
+					}
+					p.tagBuf.WriteString(chunk[len(chunk)-partialLen:])
+				} else {
+					p.emitText(chunk)
+				}
+				chunk = ""
+			}
+		}
+	}
+}
+
+// partialTagMatch checks if the end of s could be the beginning of tag.
+// Returns the length of the partial match (0 if none).
+func (p *thinkTagParser) partialTagMatch(s string, tag string) int {
+	// Check decreasing suffix lengths of s against prefixes of tag
+	maxCheck := len(tag) - 1
+	if maxCheck > len(s) {
+		maxCheck = len(s)
+	}
+	for i := maxCheck; i >= 1; i-- {
+		if strings.HasPrefix(tag, s[len(s)-i:]) {
+			return i
+		}
+	}
+	return 0
+}
+
+func (p *thinkTagParser) emitText(text string) {
+	if text == "" {
+		return
+	}
+	if !p.textStarted {
+		_ = p.sseHandler.AiMsgTextStart(p.textID)
+		p.textStarted = true
+	}
+	_ = p.sseHandler.AiMsgTextDelta(p.textID, text)
+}
+
+func (p *thinkTagParser) emitReasoning(text string) {
+	if text == "" {
+		return
+	}
+	if !p.reasoningStarted {
+		_ = p.sseHandler.AiMsgReasoningStart(p.reasoningID)
+		p.reasoningStarted = true
+	}
+	_ = p.sseHandler.AiMsgReasoningDelta(p.reasoningID, text)
+}
+
+// flush emits any remaining buffered content (e.g. at end of stream)
+func (p *thinkTagParser) flush() {
+	if p.tagBuf.Len() == 0 {
+		return
+	}
+	remaining := p.tagBuf.String()
+	p.tagBuf.Reset()
+	if p.inThinking {
+		if !p.reasoningStarted {
+			_ = p.sseHandler.AiMsgReasoningStart(p.reasoningID)
+			p.reasoningStarted = true
+		}
+		_ = p.sseHandler.AiMsgReasoningDelta(p.reasoningID, remaining)
+	} else {
+		if !p.textStarted {
+			_ = p.sseHandler.AiMsgTextStart(p.textID)
+			p.textStarted = true
+		}
+		_ = p.sseHandler.AiMsgTextDelta(p.textID, remaining)
+	}
+}
+
+// finalize closes any open reasoning/text blocks
+func (p *thinkTagParser) finalize() {
+	p.flush()
+	if p.reasoningStarted {
+		_ = p.sseHandler.AiMsgReasoningEnd(p.reasoningID)
+		p.reasoningStarted = false
+	}
+	if p.textStarted {
+		_ = p.sseHandler.AiMsgTextEnd(p.textID)
+		p.textStarted = false
+	}
+}
+
+// modelUsesThinkTags returns true for models known to embed reasoning in <think>...</think> tags
+// within the content field (rather than using a dedicated reasoning_content API field).
+func modelUsesThinkTags(model string) bool {
+	m := strings.ToLower(model)
+	thinkTagModels := []string{"deepseek", "qwen", "glm", "yi-", "minimax"}
+	for _, prefix := range thinkTagModels {
+		if strings.Contains(m, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func processChatStream(
 	ctx context.Context,
 	body io.Reader,
@@ -100,12 +293,14 @@ func processChatStream(
 	cont *uctypes.WaveContinueResponse,
 ) (*uctypes.WaveStopReason, *StoredChatMessage, error) {
 	decoder := eventsource.NewDecoder(body)
-	var textBuilder strings.Builder
 	msgID := uuid.New().String()
 	textID := uuid.New().String()
+	reasoningID := uuid.New().String()
 	var finishReason string
-	textStarted := false
 	var toolCallsInProgress []ToolCall
+	var streamUsage *ChatUsage
+
+	parser := newThinkTagParser(sseHandler, textID, reasoningID, modelUsesThinkTags(chatOpts.Config.Model))
 
 	if cont == nil {
 		_ = sseHandler.AiMsgStart(msgID)
@@ -128,7 +323,7 @@ func processChatStream(
 				break
 			}
 			if sseHandler.Err() != nil {
-				partialMsg := extractPartialTextMessage(msgID, textBuilder.String())
+				partialMsg := extractPartialTextMessage(msgID, parser.contentBuilder.String())
 				return &uctypes.WaveStopReason{
 					Kind:      uctypes.StopKindCanceled,
 					ErrorType: "client_disconnect",
@@ -154,18 +349,18 @@ func processChatStream(
 			continue
 		}
 
+		// Capture usage from the final chunk (sent with stream_options.include_usage)
+		if chunk.Usage != nil {
+			streamUsage = chunk.Usage
+		}
+
 		if len(chunk.Choices) == 0 {
 			continue
 		}
 
 		choice := chunk.Choices[0]
 		if choice.Delta.Content != "" {
-			if !textStarted {
-				_ = sseHandler.AiMsgTextStart(textID)
-				textStarted = true
-			}
-			textBuilder.WriteString(choice.Delta.Content)
-			_ = sseHandler.AiMsgTextDelta(textID, choice.Delta.Content)
+			parser.processChunk(choice.Delta.Content)
 		}
 
 		if len(choice.Delta.ToolCalls) > 0 {
@@ -236,22 +431,36 @@ func processChatStream(
 		ToolCalls: waveToolCalls,
 	}
 
+	// Finalize parser: close any open reasoning/text SSE blocks
+	parser.finalize()
+
 	assistantMsg := &StoredChatMessage{
 		MessageId: msgID,
 		Message: ChatRequestMessage{
 			Role: "assistant",
 		},
+		Usage: streamUsage,
 	}
 
+	// Store full raw content (including <think> tags) to preserve thinking in conversation history
 	if len(validToolCalls) > 0 {
 		assistantMsg.Message.ToolCalls = validToolCalls
+		if parser.contentBuilder.Len() > 0 {
+			assistantMsg.Message.Content = parser.contentBuilder.String()
+		}
 	} else {
-		assistantMsg.Message.Content = textBuilder.String()
+		assistantMsg.Message.Content = parser.contentBuilder.String()
 	}
 
-	if textStarted {
-		_ = sseHandler.AiMsgTextEnd(textID)
+	// Send usage data to frontend
+	if streamUsage != nil {
+		_ = sseHandler.AiMsgData("data-usage", msgID, map[string]any{
+			"input_tokens":  streamUsage.InputTokens,
+			"output_tokens": streamUsage.OutputTokens,
+			"total_tokens":  streamUsage.TotalTokens,
+		})
 	}
+
 	_ = sseHandler.AiMsgFinishStep()
 	if stopKind != uctypes.StopKindToolUse {
 		_ = sseHandler.AiMsgFinish(finishReason, nil)

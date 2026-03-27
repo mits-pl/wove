@@ -159,6 +159,20 @@ const AIMessagePart = memo(({ part, role, isStreaming }: AIMessagePartProps) => 
         }
     }
 
+    if (part.type === "data-usage") {
+        const data = (part as any).data;
+        if (data) {
+            const input = data.input_tokens ?? 0;
+            const output = data.output_tokens ?? 0;
+            const total = data.total_tokens ?? input + output;
+            return (
+                <div className="text-xs text-gray-500 mt-1 select-none">
+                    tokens: {total.toLocaleString()} (in: {input.toLocaleString()}, out: {output.toLocaleString()})
+                </div>
+            );
+        }
+    }
+
     return null;
 });
 
@@ -174,6 +188,7 @@ const isDisplayPart = (part: WaveUIMessagePart): boolean => {
         part.type === "text" ||
         part.type === "data-tooluse" ||
         part.type === "data-toolprogress" ||
+        part.type === "data-usage" ||
         (part.type.startsWith("tool-") && "state" in part && part.state === "input-available")
     );
 };

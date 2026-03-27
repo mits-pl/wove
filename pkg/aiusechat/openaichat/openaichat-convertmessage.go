@@ -104,8 +104,9 @@ func buildChatHTTPRequest(ctx context.Context, messages []ChatRequestMessage, ch
 	}
 
 	reqBody := &ChatRequest{
-		Messages: finalMessages,
-		Stream:   true,
+		Messages:      finalMessages,
+		Stream:        true,
+		StreamOptions: &StreamOptions{IncludeUsage: true},
 	}
 
 	// Model is only added to request for non-azure-legacy providers

@@ -30,6 +30,11 @@ type WaveUIDataTypes = {
         toolname: string;
         statuslines: string[];
     };
+    usage: {
+        input_tokens: number;
+        output_tokens: number;
+        total_tokens: number;
+    };
 };
 
 export type WaveUIMessage = UIMessage<unknown, WaveUIDataTypes, any>;
