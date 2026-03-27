@@ -4,6 +4,7 @@
 package aiusechat
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -119,6 +120,13 @@ func verifyWriteTextFileInput(input any, toolUseData *uctypes.UIMessageDataToolU
 	contentsBytes := []byte(params.Contents)
 	if utilfn.HasBinaryData(contentsBytes) {
 		return fmt.Errorf("contents appear to contain binary data")
+	}
+
+	// Enforce read-before-write for existing files (new files are exempt)
+	if _, statErr := os.Stat(expandedPath); statErr == nil {
+		if !WasFileRead(expandedPath) {
+			return fmt.Errorf("you must read the file with read_text_file before overwriting it. Read %s first to understand its current content, then retry the write", params.Filename)
+		}
 	}
 
 	_, err = validateTextFile(expandedPath, "write to", false)
@@ -259,6 +267,11 @@ func verifyEditTextFileInput(input any, toolUseData *uctypes.UIMessageDataToolUs
 		return fmt.Errorf("path must be absolute, got relative path: %s", params.Filename)
 	}
 
+	// Enforce read-before-write: must read the file before editing it
+	if !WasFileRead(expandedPath) {
+		return fmt.Errorf("you must read the file with read_text_file before editing it. Read %s first to understand its current content, then retry the edit", params.Filename)
+	}
+
 	_, err = validateTextFile(expandedPath, "edit", true)
 	if err != nil {
 		return err
@@ -302,10 +315,33 @@ func EditTextFileDryRun(input any, fileOverride string) ([]byte, []byte, error) 
 
 	modifiedContent, err := fileutil.ApplyEdits(originalContent, params.Edits)
 	if err != nil {
-		return nil, nil, err
+		// Fallback: build a synthetic diff from the edit specs
+		// when old_str doesn't match the file content
+		synthOriginal, synthModified := buildSyntheticEditDiff(params.Edits)
+		return synthOriginal, synthModified, nil
 	}
 
 	return originalContent, modifiedContent, nil
+}
+
+// buildSyntheticEditDiff creates a text-based diff from edit specs
+// when the actual dry-run fails (e.g. old_str not found in current file).
+func buildSyntheticEditDiff(edits []fileutil.EditSpec) ([]byte, []byte) {
+	var original, modified bytes.Buffer
+	for i, edit := range edits {
+		if edit.Desc != "" {
+			header := fmt.Sprintf("// Edit %d: %s\n", i+1, edit.Desc)
+			original.WriteString(header)
+			modified.WriteString(header)
+		}
+		original.WriteString(edit.OldStr)
+		modified.WriteString(edit.NewStr)
+		if i < len(edits)-1 {
+			original.WriteString("\n\n// ...\n\n")
+			modified.WriteString("\n\n// ...\n\n")
+		}
+	}
+	return original.Bytes(), modified.Bytes()
 }
 
 func editTextFileCallback(input any, toolUseData *uctypes.UIMessageDataToolUse) (any, error) {

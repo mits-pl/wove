@@ -518,6 +518,11 @@ func RunAIChat(ctx context.Context, sseHandler *sse.SSEHandlerCh, backend UseCha
 			// Compact old tool results to prevent context window overflow.
 			// Keep the 4 most recent tool results at full length, truncate older ones to 500 chars.
 			chatstore.DefaultChatStore.CompactOldToolResults(chatOpts.ChatId, 4, 500)
+			// Context usage warning: after many iterations, remind the model to use sub-tasks
+			if metrics.RequestCount >= 8 && chatOpts.SubTaskDepth == 0 {
+				contextHint := fmt.Sprintf("<context_warning>You have made %d API requests in this conversation. Context window may be filling up. For remaining complex steps, consider using run_sub_task to execute them in isolated conversations to prevent context overflow.</context_warning>", metrics.RequestCount)
+				chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, contextHint)
+			}
 			cont = &uctypes.WaveContinueResponse{
 				Model:            chatOpts.Config.Model,
 				ContinueFromKind: uctypes.StopKindToolUse,

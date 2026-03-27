@@ -310,6 +310,9 @@ func readTextFileCallback(input any, toolUseData *uctypes.UIMessageDataToolUse) 
 		stopReason = StopReasonMaxBytes
 	}
 
+	// Track that this file was read (for read-before-write enforcement)
+	TrackFileRead(expandedPath)
+
 	result := map[string]any{
 		"total_size":    totalSize,
 		"data":          data,

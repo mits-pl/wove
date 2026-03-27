@@ -6,6 +6,8 @@ package aiusechat
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -31,10 +33,12 @@ type TermRunCommandInput struct {
 }
 
 type TermRunCommandOutput struct {
-	Command  string `json:"command"`
-	ExitCode *int   `json:"exitcode,omitempty"`
-	Output   string `json:"output"`
-	TimedOut bool   `json:"timedout,omitempty"`
+	Command   string `json:"command"`
+	ExitCode  *int   `json:"exitcode,omitempty"`
+	Output    string `json:"output"`
+	TimedOut  bool   `json:"timedout,omitempty"`
+	Cwd       string `json:"cwd,omitempty"`
+	GitBranch string `json:"git_branch,omitempty"`
 }
 
 func parseTermRunCommandInput(input any) (*TermRunCommandInput, error) {
@@ -57,6 +61,27 @@ func parseTermRunCommandInput(input any) (*TermRunCommandInput, error) {
 	}
 
 	return result, nil
+}
+
+// getGitBranch reads the current git branch from .git/HEAD in the given directory or its parents.
+func getGitBranch(dir string) string {
+	for d := dir; d != "/" && d != "."; d = filepath.Dir(d) {
+		headPath := filepath.Join(d, ".git", "HEAD")
+		data, err := os.ReadFile(headPath)
+		if err != nil {
+			continue
+		}
+		content := strings.TrimSpace(string(data))
+		if strings.HasPrefix(content, "ref: refs/heads/") {
+			return strings.TrimPrefix(content, "ref: refs/heads/")
+		}
+		// Detached HEAD — return short hash
+		if len(content) >= 8 {
+			return content[:8]
+		}
+		return content
+	}
+	return ""
 }
 
 func sendCommandToTerminal(blockId string, command string) error {
@@ -244,6 +269,15 @@ func GetTermRunCommandToolDefinition(tabId string) uctypes.ToolDefinition {
 					lines = lines[len(lines)-TermRunMaxOutputLines:]
 				}
 				output.Output = strings.Join(lines, "\n")
+			}
+
+			// Enrich output with CWD and git branch for stateful context
+			cwd := getTerminalCwd(context.Background(), tabId)
+			if cwd != "" {
+				output.Cwd = cwd
+				if branch := getGitBranch(cwd); branch != "" {
+					output.GitBranch = branch
+				}
 			}
 
 			return output, nil

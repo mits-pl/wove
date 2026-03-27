@@ -97,14 +97,14 @@ Claude Code ma twarde reguły: "Edit tool will FAIL if you did not read the file
 
 - [x] **ME-0:** Wzmocnione wymuszenie czytania kodu przed pisaniem + nowa sekcja Architecture Matching
 - [ ] **ME-1:** Stworzenie `SystemPromptText_Gemini` z wariantem promptu
-- [ ] **ME-2:** Stateful tool responses (CWD, git branch w odpowiedziach narzędzi)
-- [ ] **ME-3:** Context usage monitoring + ostrzeżenie o zapełnieniu
+- [x] **ME-2:** Stateful tool responses (CWD, git branch w odpowiedziach narzędzi)
+- [x] **ME-3:** Context usage monitoring + ostrzeżenie o zapełnieniu
 
 ### Larger effort (1-2 dni każdy)
 
 - [ ] **LE-1:** Repo map (tree-sitter lub grep-based structural awareness)
 - [ ] **LE-2:** Formalizacja trójpoziomowej architektury kontekstu
-- [ ] **LE-3:** Read-before-write enforcement w tool verification
+- [x] **LE-3:** Read-before-write enforcement w tool verification
 
 ---
 
