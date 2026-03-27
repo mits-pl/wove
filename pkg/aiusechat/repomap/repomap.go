@@ -125,6 +125,9 @@ const maxFileSize = 256 * 1024
 // maxTotalChars limits the output size to prevent eating too many tokens.
 const maxTotalChars = 6000
 
+// maxFiles limits how many files we parse to prevent slow builds on large projects.
+const maxFiles = 200
+
 // BuildRepoMap walks a directory and produces a structural map of all definitions.
 // The result is a compact string suitable for injection into an AI system prompt.
 func BuildRepoMap(root string, maxChars int) string {
@@ -133,6 +136,7 @@ func BuildRepoMap(root string, maxChars int) string {
 	}
 
 	var allFiles []FileSymbols
+	fileCount := 0
 	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
@@ -150,6 +154,9 @@ func BuildRepoMap(root string, maxChars int) string {
 		if info.Size() > maxFileSize || info.Size() == 0 {
 			return nil
 		}
+		if fileCount >= maxFiles {
+			return filepath.SkipAll
+		}
 
 		ext := filepath.Ext(path)
 		// Handle .blade.php
@@ -162,6 +169,7 @@ func BuildRepoMap(root string, maxChars int) string {
 			return nil
 		}
 
+		fileCount++
 		relPath, _ := filepath.Rel(root, path)
 		symbols := extractSymbols(path, cfg)
 		if len(symbols) > 0 {

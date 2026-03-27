@@ -773,19 +773,29 @@ func WaveAIPostMessageHandler(w http.ResponseWriter, r *http.Request) {
 			if rules := projectctx.ExtractCriticalRules(cwd); rules != "" {
 				chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, rules)
 			}
-			// Warm tier: technology-specific conventions from WAVE.md/CLAUDE.md
-			// Injected on every conversation, filtered by project's dominant tech
-			if warmCtx := projectctx.ExtractWarmContext(cwd, projectctx.DetectDominantExt(cwd), 3000); warmCtx != "" {
-				chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, warmCtx)
-			}
-			// First message only: repo map (structural awareness) + hints
+			// First message only: warm context + repo map + hints
 			if chatstore.DefaultChatStore.CountUserMessages(req.ChatID) == 0 {
-				// Prefer tree-sitter repo map (shows classes/functions/methods per file)
-				if repoMapStr := repomap.BuildRepoMap(cwd, 6000); repoMapStr != "" {
-					chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, repoMapStr)
-				} else if tree := projectctx.GetProjectTree(cwd, 2); tree != "" {
-					// Fallback to simple directory tree if no parseable files found
-					chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, tree)
+				// Warm tier: technology-specific conventions from WAVE.md/CLAUDE.md
+				if dominantExt := projectctx.DetectDominantExt(cwd); dominantExt != "" {
+					if warmCtx := projectctx.ExtractWarmContext(cwd, dominantExt, 3000); warmCtx != "" {
+						chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, warmCtx)
+					}
+				}
+				// Repo map with timeout (tree-sitter parsing can be slow on large projects)
+				repoMapDone := make(chan string, 1)
+				go func() {
+					repoMapDone <- repomap.BuildRepoMap(cwd, 6000)
+				}()
+				select {
+				case repoMapStr := <-repoMapDone:
+					if repoMapStr != "" {
+						chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, repoMapStr)
+					}
+				case <-time.After(5 * time.Second):
+					log.Printf("[repomap] timed out after 5s for %s, falling back to tree\n", cwd)
+					if tree := projectctx.GetProjectTree(cwd, 2); tree != "" {
+						chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, tree)
+					}
 				}
 				// Hints about available context (compact)
 				var hints []string
