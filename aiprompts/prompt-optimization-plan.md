@@ -103,7 +103,7 @@ Claude Code ma twarde reguły: "Edit tool will FAIL if you did not read the file
 ### Larger effort (1-2 dni każdy)
 
 - [x] **LE-1:** Repo map via gotreesitter (pure Go tree-sitter, 8 languages)
-- [ ] **LE-2:** Formalizacja trójpoziomowej architektury kontekstu
+- [x] **LE-2:** Formalizacja trójpoziomowej architektury kontekstu
 - [x] **LE-3:** Read-before-write enforcement w tool verification
 
 ---

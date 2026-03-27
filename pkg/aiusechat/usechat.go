@@ -773,6 +773,11 @@ func WaveAIPostMessageHandler(w http.ResponseWriter, r *http.Request) {
 			if rules := projectctx.ExtractCriticalRules(cwd); rules != "" {
 				chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, rules)
 			}
+			// Warm tier: technology-specific conventions from WAVE.md/CLAUDE.md
+			// Injected on every conversation, filtered by project's dominant tech
+			if warmCtx := projectctx.ExtractWarmContext(cwd, projectctx.DetectDominantExt(cwd), 3000); warmCtx != "" {
+				chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, warmCtx)
+			}
 			// First message only: repo map (structural awareness) + hints
 			if chatstore.DefaultChatStore.CountUserMessages(req.ChatID) == 0 {
 				// Prefer tree-sitter repo map (shows classes/functions/methods per file)

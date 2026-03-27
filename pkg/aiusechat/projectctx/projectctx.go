@@ -252,6 +252,49 @@ func extToTags(ext string) []string {
 	}
 }
 
+// DetectDominantExt scans the top-level directories for the most common source file extension.
+// Returns the extension without dot (e.g. "php", "ts", "go") or empty string.
+func DetectDominantExt(dir string) string {
+	counts := make(map[string]int)
+	relevantExts := map[string]bool{
+		".php": true, ".go": true, ".js": true, ".ts": true, ".tsx": true,
+		".vue": true, ".py": true, ".rs": true, ".rb": true, ".java": true,
+	}
+
+	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			name := info.Name()
+			if skipDirs[name] || (strings.HasPrefix(name, ".") && path != dir) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		ext := filepath.Ext(path)
+		if relevantExts[ext] {
+			counts[ext]++
+		}
+		return nil
+	})
+
+	if len(counts) == 0 {
+		return ""
+	}
+
+	// Find the most common extension
+	maxExt := ""
+	maxCount := 0
+	for ext, count := range counts {
+		if count > maxCount {
+			maxCount = count
+			maxExt = ext
+		}
+	}
+	return strings.TrimPrefix(maxExt, ".")
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a
@@ -259,16 +302,34 @@ func min(a, b int) int {
 	return b
 }
 
-// criticalKeywords are patterns that indicate mandatory rules the AI must always follow.
+// criticalSectionKeywords identify dedicated rules sections by heading.
+var criticalSectionKeywords = []string{
+	"critical rules", "rules", "mandatory", "conventions",
+	"coding standards", "code style", "requirements",
+}
+
+// criticalKeywords are patterns that indicate mandatory rules (fallback extraction).
 var criticalKeywords = []string{
 	"must", "always", "never", "required", "mandatory", "enforce",
 	"every change", "after change", "before commit",
 	"pint", "lint", "format", "test",
 }
 
-// ExtractCriticalRules scans all instruction files in the directory and extracts
-// short, mandatory rules (lines containing critical keywords).
-// Returns a compact string (~100-200 tokens) injected into every system prompt.
+// isCriticalSection checks if a section heading indicates a dedicated rules section.
+func isCriticalSection(heading string) bool {
+	h := strings.ToLower(heading)
+	for _, kw := range criticalSectionKeywords {
+		if strings.Contains(h, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// ExtractCriticalRules extracts mandatory project rules from instruction files.
+// Priority: dedicated "Critical Rules" / "Rules" / "Conventions" sections.
+// Fallback: lines containing critical keywords (must, always, never, etc.).
+// Returns a compact string (~100-300 tokens) injected into every system prompt.
 func ExtractCriticalRules(dir string) string {
 	files := FindAllInstructionsFiles(dir)
 	if len(files) == 0 {
@@ -277,30 +338,60 @@ func ExtractCriticalRules(dir string) string {
 
 	var rules []string
 	seen := make(map[string]bool)
+	foundDedicatedSection := false
 
+	// Pass 1: Look for dedicated rules sections (highest priority)
 	for _, filePath := range files {
 		pi, err := ParseInstructions(filePath)
 		if err != nil {
 			continue
 		}
 		for _, section := range pi.Sections {
+			if !isCriticalSection(section.Heading) {
+				continue
+			}
+			foundDedicatedSection = true
 			lines := strings.Split(section.Content, "\n")
 			for _, line := range lines {
-				line = strings.TrimSpace(line)
-				if line == "" || len(line) < 10 || len(line) > 200 {
+				clean := strings.TrimSpace(line)
+				clean = strings.TrimLeft(clean, "- *>0123456789.")
+				clean = strings.TrimSpace(clean)
+				if clean == "" || len(clean) < 5 {
 					continue
 				}
-				lineLower := strings.ToLower(line)
-				for _, kw := range criticalKeywords {
-					if strings.Contains(lineLower, kw) {
-						// Clean up markdown formatting
-						clean := strings.TrimLeft(line, "- *>")
-						clean = strings.TrimSpace(clean)
-						if clean != "" && !seen[clean] {
-							seen[clean] = true
-							rules = append(rules, clean)
+				if !seen[clean] {
+					seen[clean] = true
+					rules = append(rules, clean)
+				}
+			}
+		}
+	}
+
+	// Pass 2: Fallback to keyword matching if no dedicated sections found
+	if !foundDedicatedSection {
+		for _, filePath := range files {
+			pi, err := ParseInstructions(filePath)
+			if err != nil {
+				continue
+			}
+			for _, section := range pi.Sections {
+				lines := strings.Split(section.Content, "\n")
+				for _, line := range lines {
+					line = strings.TrimSpace(line)
+					if line == "" || len(line) < 10 || len(line) > 200 {
+						continue
+					}
+					lineLower := strings.ToLower(line)
+					for _, kw := range criticalKeywords {
+						if strings.Contains(lineLower, kw) {
+							clean := strings.TrimLeft(line, "- *>")
+							clean = strings.TrimSpace(clean)
+							if clean != "" && !seen[clean] {
+								seen[clean] = true
+								rules = append(rules, clean)
+							}
+							break
 						}
-						break
 					}
 				}
 			}
@@ -312,11 +403,59 @@ func ExtractCriticalRules(dir string) string {
 	}
 
 	// Limit to most important rules
-	if len(rules) > 10 {
-		rules = rules[:10]
+	if len(rules) > 15 {
+		rules = rules[:15]
 	}
 
 	return "<project_rules>\n" + strings.Join(rules, "\n") + "\n</project_rules>"
+}
+
+// ExtractWarmContext returns technology-filtered sections from instruction files.
+// Used as "warm tier" context: injected when the AI is working with files of a specific type.
+// Returns relevant sections (architecture, conventions + tech-specific) up to maxChars.
+func ExtractWarmContext(dir string, fileExt string, maxChars int) string {
+	if fileExt == "" || maxChars <= 0 {
+		return ""
+	}
+
+	files := FindAllInstructionsFiles(dir)
+	if len(files) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<project_context tech=\"" + fileExt + "\">\n")
+
+	for _, filePath := range files {
+		pi, err := ParseInstructions(filePath)
+		if err != nil {
+			continue
+		}
+
+		techTags := extToTags(fileExt)
+		for _, section := range pi.Sections {
+			// Skip sections already covered by critical rules
+			if isCriticalSection(section.Heading) {
+				continue
+			}
+			if !shouldInclude(section, techTags) {
+				continue
+			}
+			entry := fmt.Sprintf("## %s\n%s\n\n", section.Heading, section.Content)
+			if sb.Len()+len(entry) > maxChars-len("</project_context>") {
+				break
+			}
+			sb.WriteString(entry)
+		}
+	}
+
+	sb.WriteString("</project_context>")
+
+	// Don't return if only tags and no content
+	if sb.Len() < 60 {
+		return ""
+	}
+	return sb.String()
 }
 
 // ExtractProjectStack extracts the project overview/stack section from instruction files.
