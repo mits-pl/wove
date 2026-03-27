@@ -24,8 +24,8 @@ func GetWaveUtilsToolDefinition(tabId string) uctypes.ToolDefinition {
 		DisplayName:      "Wave Utilities",
 		Description: "Utility tool. Actions: " +
 			"session_history - previous session; " +
-			"project_instructions - read CLAUDE.md/WAVE.md (params: sections, file_ext); " +
-			"plan_create - multi-step plan (params: name, steps[{label,details}] - include concrete requirements, file paths, conventions in details); " +
+			"project_instructions - read WAVE.md/CLAUDE.md/AGENTS.md for project conventions, architecture rules, and coding standards (params: sections, file_ext). ALWAYS call this before writing code to learn the project's required patterns; " +
+			"plan_create - multi-step plan (params: name, steps[{label,details}] - each step must include: file path, reference file to copy pattern from, specific conventions to follow); " +
 			"plan_update - mark step done/failed (params: step_id, status, result); " +
 			"plan_status - check progress",
 		ShortDescription: "Session history, project instructions, plans",

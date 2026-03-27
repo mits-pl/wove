@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"os/user"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -66,10 +65,11 @@ func getSystemPrompt(apiType string, model string, isBuilder bool, hasToolsCapab
 	}
 	dateInfo := fmt.Sprintf("Current date: %s", time.Now().Format("2006-01-02 (Monday)"))
 	prompts := []string{basePrompt, dateInfo}
-	modelLower := strings.ToLower(model)
-	needsStrictToolAddOn, _ := regexp.MatchString(`(?i)\b(mistral|o?llama|qwen|mixtral|yi|phi|deepseek)\b`, modelLower)
-	if needsStrictToolAddOn && !useNoToolsPrompt {
+	if !useNoToolsPrompt {
 		prompts = append(prompts, SystemPromptText_StrictToolAddOn)
+	}
+	if apiType == uctypes.APIType_GoogleGemini {
+		prompts = append(prompts, SystemPromptText_GeminiAddOn)
 	}
 	if mcpAccess {
 		prompts = append(prompts, SystemPromptText_MCPAddOn)
