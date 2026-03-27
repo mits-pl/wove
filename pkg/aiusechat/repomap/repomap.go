@@ -8,10 +8,13 @@ package repomap
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	ts "github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
@@ -34,6 +37,25 @@ type FileSymbols struct {
 type langConfig struct {
 	langFn func() *ts.Language
 	query  string
+
+	// cached after first use
+	initOnce    sync.Once
+	cachedLang  *ts.Language
+	cachedQuery *ts.Query
+}
+
+// getParserAndQuery returns cached language and query, initializing on first call.
+func (lc *langConfig) getParserAndQuery() (*ts.Language, *ts.Query) {
+	lc.initOnce.Do(func() {
+		lc.cachedLang = lc.langFn()
+		if lc.cachedLang != nil {
+			q, err := ts.NewQuery(lc.query, lc.cachedLang)
+			if err == nil {
+				lc.cachedQuery = q
+			}
+		}
+	})
+	return lc.cachedLang, lc.cachedQuery
 }
 
 // langConfigs maps file extensions to their tree-sitter configuration.
@@ -76,7 +98,7 @@ var langConfigs = map[string]*langConfig{
 `,
 	},
 	".tsx": {
-		langFn: grammars.TypescriptLanguage, // TSX uses same grammar in gotreesitter
+		langFn: grammars.TypescriptLanguage,
 		query: `
 (function_declaration name: (identifier) @name.def.func) @def.func
 (class_declaration name: (type_identifier) @name.def.class) @def.class
@@ -117,26 +139,54 @@ var skipDirs = map[string]bool{
 	"build": true, "storage": true, ".next": true,
 	"__pycache__": true, ".cache": true, "tmp": true,
 	".claude": true, ".kilocode": true, ".roo": true,
+	"tests": true, "test": true, "spec": true,
+	"public": true, "resources": true, "database": true,
+	"bootstrap": true, "config": true, "lang": true,
+	"stubs": true, ".output": true, "coverage": true,
 }
 
-// maxFileSize is the largest file we'll attempt to parse (256KB).
-const maxFileSize = 256 * 1024
+const (
+	maxFileSize  = 256 * 1024 // largest file to parse
+	maxTotalChars = 6000      // output size limit
+	maxFiles     = 150        // max files to parse
+	numWorkers   = 4          // concurrent parsers
+)
 
-// maxTotalChars limits the output size to prevent eating too many tokens.
-const maxTotalChars = 6000
-
-// maxFiles limits how many files we parse to prevent slow builds on large projects.
-const maxFiles = 200
+// cache holds the last repo map result to avoid re-parsing.
+var (
+	cacheMu     sync.Mutex
+	cachedRoot  string
+	cachedMap   string
+	cachedTime  time.Time
+	cacheTTL    = 5 * time.Minute
+)
 
 // BuildRepoMap walks a directory and produces a structural map of all definitions.
-// The result is a compact string suitable for injection into an AI system prompt.
+// Results are cached for 5 minutes per directory.
 func BuildRepoMap(root string, maxChars int) string {
 	if maxChars <= 0 {
 		maxChars = maxTotalChars
 	}
 
-	var allFiles []FileSymbols
-	fileCount := 0
+	// Check cache
+	cacheMu.Lock()
+	if cachedRoot == root && cachedMap != "" && time.Since(cachedTime) < cacheTTL {
+		result := cachedMap
+		cacheMu.Unlock()
+		return result
+	}
+	cacheMu.Unlock()
+
+	start := time.Now()
+
+	// Collect files to parse
+	type fileJob struct {
+		path    string
+		relPath string
+		cfg     *langConfig
+	}
+
+	var jobs []fileJob
 	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
@@ -154,14 +204,13 @@ func BuildRepoMap(root string, maxChars int) string {
 		if info.Size() > maxFileSize || info.Size() == 0 {
 			return nil
 		}
-		if fileCount >= maxFiles {
+		if len(jobs) >= maxFiles {
 			return filepath.SkipAll
 		}
 
 		ext := filepath.Ext(path)
-		// Handle .blade.php
 		if strings.HasSuffix(path, ".blade.php") {
-			return nil // skip blade templates
+			return nil
 		}
 
 		cfg, ok := langConfigs[ext]
@@ -169,35 +218,83 @@ func BuildRepoMap(root string, maxChars int) string {
 			return nil
 		}
 
-		fileCount++
 		relPath, _ := filepath.Rel(root, path)
-		symbols := extractSymbols(path, cfg)
-		if len(symbols) > 0 {
-			allFiles = append(allFiles, FileSymbols{
-				RelPath: relPath,
-				Symbols: symbols,
-			})
-		}
+		jobs = append(jobs, fileJob{path: path, relPath: relPath, cfg: cfg})
 		return nil
 	})
 
-	// Sort by path for consistent output
-	sort.Slice(allFiles, func(i, j int) bool {
-		return allFiles[i].RelPath < allFiles[j].RelPath
+	log.Printf("[repomap] found %d files to parse in %s\n", len(jobs), root)
+
+	// Parse files concurrently
+	type result struct {
+		idx     int
+		symbols FileSymbols
+	}
+
+	results := make([]result, 0, len(jobs))
+	resultCh := make(chan result, len(jobs))
+	jobCh := make(chan int, len(jobs))
+
+	var wg sync.WaitGroup
+	for w := 0; w < numWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := range jobCh {
+				job := jobs[idx]
+				symbols := extractSymbols(job.path, job.cfg)
+				if len(symbols) > 0 {
+					resultCh <- result{idx: idx, symbols: FileSymbols{RelPath: job.relPath, Symbols: symbols}}
+				}
+			}
+		}()
+	}
+
+	for i := range jobs {
+		jobCh <- i
+	}
+	close(jobCh)
+	wg.Wait()
+	close(resultCh)
+
+	for r := range resultCh {
+		results = append(results, r)
+	}
+
+	// Sort by original order (path-based)
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].symbols.RelPath < results[j].symbols.RelPath
 	})
 
-	return formatRepoMap(allFiles, maxChars)
+	allFiles := make([]FileSymbols, len(results))
+	for i, r := range results {
+		allFiles[i] = r.symbols
+	}
+
+	mapStr := formatRepoMap(allFiles, maxChars)
+
+	log.Printf("[repomap] parsed %d/%d files in %.1fs\n", len(results), len(jobs), time.Since(start).Seconds())
+
+	// Update cache
+	cacheMu.Lock()
+	cachedRoot = root
+	cachedMap = mapStr
+	cachedTime = time.Now()
+	cacheMu.Unlock()
+
+	return mapStr
 }
 
 // extractSymbols parses a file and extracts all definition symbols.
+// Uses pre-compiled parsers and queries for performance.
 func extractSymbols(filePath string, cfg *langConfig) []Symbol {
 	source, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil
 	}
 
-	lang := cfg.langFn()
-	if lang == nil {
+	lang, query := cfg.getParserAndQuery()
+	if lang == nil || query == nil {
 		return nil
 	}
 
@@ -209,11 +306,6 @@ func extractSymbols(filePath string, cfg *langConfig) []Symbol {
 
 	root := tree.RootNode()
 	if root == nil {
-		return nil
-	}
-
-	query, err := ts.NewQuery(cfg.query, lang)
-	if err != nil {
 		return nil
 	}
 
