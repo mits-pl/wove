@@ -21,6 +21,7 @@ import (
 	"github.com/woveterm/wove/pkg/aiusechat/aiplan"
 	"github.com/woveterm/wove/pkg/aiusechat/chatstore"
 	"github.com/woveterm/wove/pkg/aiusechat/projectctx"
+	"github.com/woveterm/wove/pkg/aiusechat/repomap"
 	"github.com/woveterm/wove/pkg/aiusechat/sessionhistory"
 	"github.com/woveterm/wove/pkg/aiusechat/skills"
 	"github.com/woveterm/wove/pkg/aiusechat/uctypes"
@@ -772,9 +773,13 @@ func WaveAIPostMessageHandler(w http.ResponseWriter, r *http.Request) {
 			if rules := projectctx.ExtractCriticalRules(cwd); rules != "" {
 				chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, rules)
 			}
-			// First message only: project structure + hints
+			// First message only: repo map (structural awareness) + hints
 			if chatstore.DefaultChatStore.CountUserMessages(req.ChatID) == 0 {
-				if tree := projectctx.GetProjectTree(cwd, 2); tree != "" {
+				// Prefer tree-sitter repo map (shows classes/functions/methods per file)
+				if repoMapStr := repomap.BuildRepoMap(cwd, 6000); repoMapStr != "" {
+					chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, repoMapStr)
+				} else if tree := projectctx.GetProjectTree(cwd, 2); tree != "" {
+					// Fallback to simple directory tree if no parseable files found
 					chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, tree)
 				}
 				// Hints about available context (compact)
