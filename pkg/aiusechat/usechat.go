@@ -782,17 +782,20 @@ func WaveAIPostMessageHandler(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				// Repo map with timeout (tree-sitter parsing can be slow on large projects)
+				log.Printf("[repomap] analyzing project structure for %s...\n", cwd)
+				repoMapStart := time.Now()
 				repoMapDone := make(chan string, 1)
 				go func() {
 					repoMapDone <- repomap.BuildRepoMap(cwd, 6000)
 				}()
 				select {
 				case repoMapStr := <-repoMapDone:
+					log.Printf("[repomap] done in %.1fs for %s\n", time.Since(repoMapStart).Seconds(), cwd)
 					if repoMapStr != "" {
 						chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, repoMapStr)
 					}
-				case <-time.After(5 * time.Second):
-					log.Printf("[repomap] timed out after 5s for %s, falling back to tree\n", cwd)
+				case <-time.After(15 * time.Second):
+					log.Printf("[repomap] timed out after 15s for %s, falling back to tree\n", cwd)
 					if tree := projectctx.GetProjectTree(cwd, 2); tree != "" {
 						chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, tree)
 					}

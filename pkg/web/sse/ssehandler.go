@@ -93,13 +93,18 @@ func (h *SSEHandlerCh) Context() context.Context {
 	return h.ctx
 }
 
-// SetupSSE configures the response headers and starts the writer goroutine
+// SetupSSE configures the response headers and starts the writer goroutine.
+// Safe to call multiple times — subsequent calls are no-ops.
 func (h *SSEHandlerCh) SetupSSE() error {
 	h.lock.Lock()
 	defer h.lock.Unlock()
 
 	if h.closed {
 		return fmt.Errorf("SSE handler is closed")
+	}
+
+	if h.initialized {
+		return nil // already set up
 	}
 
 	h.initialized = true
