@@ -223,6 +223,9 @@ func GenerateTabStateAndTools(ctx context.Context, tabid string, widgetAccess bo
 		// owner profile is always available
 		tools = append(tools, GetOwnerProfileToolDefinition())
 
+		// repo map tool for structural code exploration
+		tools = append(tools, GetRepoMapToolDefinition())
+
 		// Skill invocation tool (only if skills are available)
 		skillTool := GetInvokeSkillToolDefinition(tabid)
 		if skillTool.InputSchema != nil {

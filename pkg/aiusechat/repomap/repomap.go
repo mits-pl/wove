@@ -340,6 +340,49 @@ func extractSymbols(filePath string, cfg *langConfig) []Symbol {
 	return symbols
 }
 
+// FilterByKind filters a repo map string to only include lines containing definitions of a specific kind.
+func FilterByKind(repoMap string, kind string) string {
+	if repoMap == "" || kind == "" {
+		return repoMap
+	}
+	prefix := kind + " "
+	var sb strings.Builder
+	sb.WriteString("<repo_map>\n")
+	lines := strings.Split(repoMap, "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "<repo_map>") || strings.HasPrefix(line, "</repo_map>") || strings.HasPrefix(line, "... [truncated]") {
+			continue
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// Parse "path: kind1 name1, kind2 name2, ..."
+		colonIdx := strings.Index(line, ": ")
+		if colonIdx < 0 {
+			continue
+		}
+		filePath := line[:colonIdx]
+		defsStr := line[colonIdx+2:]
+		defs := strings.Split(defsStr, ", ")
+		var matched []string
+		for _, def := range defs {
+			if strings.HasPrefix(def, prefix) {
+				matched = append(matched, def)
+			}
+		}
+		if len(matched) > 0 {
+			sb.WriteString(filePath + ": " + strings.Join(matched, ", ") + "\n")
+		}
+	}
+	sb.WriteString("</repo_map>")
+	result := sb.String()
+	if result == "<repo_map>\n</repo_map>" {
+		return ""
+	}
+	return result
+}
+
 // formatRepoMap formats extracted symbols into a compact string.
 func formatRepoMap(files []FileSymbols, maxChars int) string {
 	if len(files) == 0 {

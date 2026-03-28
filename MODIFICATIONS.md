@@ -120,6 +120,9 @@ This document lists all modifications and additions made in Wove.
 - Cached for 5 minutes per directory (instant on subsequent messages)
 - Pre-compiled tree-sitter queries per extension (`sync.Once`)
 - Concurrent file parsing (4 workers), max 150 files, 15-second timeout with fallback to directory tree
+- `repo_map` AI tool — on-demand structural code exploration with `path` and `kind` filter parameters
+- `FilterByKind` — filter repo map output to specific definition types (func, class, method, type, interface, enum)
+- Auto-approved (no user confirmation needed) — read-only structural analysis
 
 ## Three-Tier Context Architecture
 - **Critical rules**: Prioritizes dedicated `## Rules` / `## Critical Rules` sections from WAVE.md before keyword matching (`must`/`always`/`never`)
