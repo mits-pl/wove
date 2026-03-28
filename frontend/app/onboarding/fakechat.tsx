@@ -16,7 +16,7 @@ const chatConfigs: ChatConfig[] = [
         userPrompt: "Check out ~/waveterm and summarize the project — what it does and how it's organized.",
         toolName: "read_dir",
         toolDescription: 'reading directory "~/waveterm"',
-        markdownResponse: `Here's a quick, file-structure–driven overview of this repo (Wave Terminal):
+        markdownResponse: `Here's a quick, file-structure–driven overview of this repo (Wove Terminal):
 
 ## What it is
 - Electron + React front end with a Go backend ("wavesrv"). Provides a terminal with GUI widgets, previews, web, and AI. (README.md)

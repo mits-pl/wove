@@ -34,12 +34,12 @@ URI format: [profile]:[uri-scheme]://[connection]/[path]
 Supported URI schemes:
   wsh:
     Used to access files on remote hosts over SSH via the WSH helper. Allows
-    for file streaming to Wave and other remotes.
+    for file streaming to Wove and other remotes.
 
     Profiles are optional for WSH URIs, provided that you have configured the
     remote host in your "connections.json" or "~/.ssh/config" file.
 
-    If a profile is provided, it must be defined in "profiles.json" in the Wave
+    If a profile is provided, it must be defined in "profiles.json" in the Wove
     configuration directory.
 
     Format: wsh://[remote]/[path]
@@ -56,7 +56,7 @@ var fileCmd = &cobra.Command{
 	Short: "manage files across local and remote systems",
 	Long: `Manage files across local and remote systems.
     
-Wave Terminal is capable of managing files from remote SSH hosts and your local
+Wove Terminal is capable of managing files from remote SSH hosts and your local
 computer. Files are addressed via URIs.` + UriHelpText}
 
 var fileTimeout int64

@@ -6,7 +6,7 @@ const UpgradeOnboardingModal_v0_14_1_Content = () => {
         <div className="flex flex-col items-start w-full mb-2 unselectable">
             <div className="text-secondary leading-relaxed mb-4">
                 <p className="mb-0">
-                    Wave v0.14.1 fixes several high-impact terminal bugs and adds new config options for focus, cursor
+                    Wove v0.14.1 fixes several high-impact terminal bugs and adds new config options for focus, cursor
                     style, and block navigation.
                 </p>
             </div>

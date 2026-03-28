@@ -215,7 +215,7 @@ export const FilesPage = ({ onFinish, onPrev }: { onFinish: () => void; onPrev?:
                     <div className="flex flex-col items-start gap-6 max-w-md">
                         <div className="flex flex-col items-start gap-4 text-secondary">
                             <p>
-                                Wave can preview markdown, images, and video files on both local <i>and remote</i>{" "}
+                                Wove can preview markdown, images, and video files on both local <i>and remote</i>{" "}
                                 machines.
                             </p>
 
@@ -227,7 +227,7 @@ export const FilesPage = ({ onFinish, onPrev }: { onFinish: () => void; onPrev?:
                                         <span className="font-mono font-semibold text-foreground">
                                             wsh view [filename]
                                         </span>{" "}
-                                        to preview files in Wave's graphical viewer
+                                        to preview files in Wove's graphical viewer
                                     </p>
                                 </div>
                             </div>
@@ -240,7 +240,7 @@ export const FilesPage = ({ onFinish, onPrev }: { onFinish: () => void; onPrev?:
                                         <span className="font-mono font-semibold text-foreground">
                                             wsh edit [filename]
                                         </span>{" "}
-                                        to open config files or code files in Wave's graphical editor
+                                        to open config files or code files in Wove's graphical editor
                                     </p>
                                 </div>
                             </div>

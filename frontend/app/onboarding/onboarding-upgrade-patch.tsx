@@ -250,7 +250,7 @@ const UpgradeOnboardingPatch = ({ isReleaseNotes = false }: UpgradeOnboardingPat
                             <Logo />
                         </div>
                         <div className="text-center text-[25px] font-normal text-foreground">
-                            Wave {currentVersion.version} Update
+                            Wove {currentVersion.version} Update
                         </div>
                     </header>
                     <OverlayScrollbarsComponent

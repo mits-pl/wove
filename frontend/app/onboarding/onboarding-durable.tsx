@@ -51,7 +51,7 @@ export const DurableSessionPage = ({
                         </div>
 
                         <div className="flex flex-col items-start gap-4 text-secondary">
-                            <p>Close your laptop, switch networks, restart Wave — your remote sessions keep running.</p>
+                            <p>Close your laptop, switch networks, restart Wove — your remote sessions keep running.</p>
 
                             <div className="flex items-start gap-3 w-full">
                                 <i className="fa-sharp fa-solid fa-link text-accent text-lg mt-1 flex-shrink-0" />

@@ -682,6 +682,12 @@ export class WaveAIModel {
         });
     }
 
+    sessionWriteApprove(path: string) {
+        RpcApi.WaveAISessionWriteApproveCommand(TabRpcClient, {
+            path: path,
+        });
+    }
+
     async openDiff(fileName: string, toolcallid: string) {
         const chatId = this.getChatId();
 

@@ -159,6 +159,7 @@ type WshRpcInterface interface {
 	GetWaveAIRateLimitCommand(ctx context.Context) (*uctypes.RateLimitInfo, error)
 	WaveAIToolApproveCommand(ctx context.Context, data CommandWaveAIToolApproveData) error
 	WaveAISessionReadApproveCommand(ctx context.Context, data CommandWaveAISessionReadApproveData) error
+	WaveAISessionWriteApproveCommand(ctx context.Context, data CommandWaveAISessionWriteApproveData) error
 	WaveAIAddContextCommand(ctx context.Context, data CommandWaveAIAddContextData) error
 	WaveAIGetToolDiffCommand(ctx context.Context, data CommandWaveAIGetToolDiffData) (*CommandWaveAIGetToolDiffRtnData, error)
 
@@ -556,6 +557,10 @@ type CommandWaveAIToolApproveData struct {
 }
 
 type CommandWaveAISessionReadApproveData struct {
+	Path string `json:"path"`
+}
+
+type CommandWaveAISessionWriteApproveData struct {
 	Path string `json:"path"`
 }
 

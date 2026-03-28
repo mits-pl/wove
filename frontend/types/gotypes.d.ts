@@ -729,6 +729,11 @@ declare global {
         path: string;
     };
 
+    // wshrpc.CommandWaveAISessionWriteApproveData
+    type CommandWaveAISessionWriteApproveData = {
+        path: string;
+    };
+
     // wshrpc.CommandWaveAIToolApproveData
     type CommandWaveAIToolApproveData = {
         toolcallid: string;

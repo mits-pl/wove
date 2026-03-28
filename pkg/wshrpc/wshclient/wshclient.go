@@ -1003,6 +1003,12 @@ func WaveAISessionReadApproveCommand(w *wshutil.WshRpc, data wshrpc.CommandWaveA
 	return err
 }
 
+// command "waveaisessionwriteapprove", wshserver.WaveAISessionWriteApproveCommand
+func WaveAISessionWriteApproveCommand(w *wshutil.WshRpc, data wshrpc.CommandWaveAISessionWriteApproveData, opts *wshrpc.RpcOpts) error {
+	_, err := sendRpcRequestCallHelper[any](w, "waveaisessionwriteapprove", data, opts)
+	return err
+}
+
 // command "waveaitoolapprove", wshserver.WaveAIToolApproveCommand
 func WaveAIToolApproveCommand(w *wshutil.WshRpc, data wshrpc.CommandWaveAIToolApproveData, opts *wshrpc.RpcOpts) error {
 	_, err := sendRpcRequestCallHelper[any](w, "waveaitoolapprove", data, opts)

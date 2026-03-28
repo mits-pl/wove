@@ -78,7 +78,7 @@ export const ApiKeyInput = memo(() => {
                 </button>
             </div>
             <div className="text-gray-500 text-[10px] mt-1.5">
-                Key is stored securely in Wave's secret store, not in config files.
+                Key is stored securely in Wove's secret store, not in config files.
             </div>
         </div>
     );

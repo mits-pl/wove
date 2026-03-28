@@ -1014,6 +1014,12 @@ export class RpcApiType {
         return client.wshRpcCall("waveaisessionreadapprove", data, opts);
     }
 
+    // command "waveaisessionwriteapprove" [call]
+    WaveAISessionWriteApproveCommand(client: WshClient, data: CommandWaveAISessionWriteApproveData, opts?: RpcOpts): Promise<void> {
+        if (this.mockClient) return this.mockClient.mockWshRpcCall(client, "waveaisessionwriteapprove", data, opts);
+        return client.wshRpcCall("waveaisessionwriteapprove", data, opts);
+    }
+
     // command "waveaitoolapprove" [call]
     WaveAIToolApproveCommand(client: WshClient, data: CommandWaveAIToolApproveData, opts?: RpcOpts): Promise<void> {
         if (this.mockClient) return this.mockClient.mockWshRpcCall(client, "waveaitoolapprove", data, opts);

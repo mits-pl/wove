@@ -52,7 +52,7 @@ function PreviewIndex() {
         <div className="min-h-screen bg-background text-foreground font-sans flex flex-col items-center justify-center gap-6">
             <div className="flex flex-col items-center gap-3">
                 <Logo />
-                <h1 className="text-title font-semibold tracking-tight text-foreground">Wave Preview Server</h1>
+                <h1 className="text-title font-semibold tracking-tight text-foreground">Wove Preview Server</h1>
             </div>
 
             <div className="w-px h-8 bg-border" />

@@ -22,7 +22,7 @@ const UpgradeOnboardingModal_v0_12_1_Content = () => {
                     <div className="text-secondary leading-5">
                         <ul className="list-disc list-outside space-y-1 pl-5">
                             <li>
-                                <strong>OSC 7 Support</strong> - Wave now automatically tracks and restores your current
+                                <strong>OSC 7 Support</strong> - Wove now automatically tracks and restores your current
                                 directory across restarts for bash, zsh, fish, and pwsh shells
                             </li>
                             <li>

@@ -13,15 +13,17 @@ import (
 	"github.com/woveterm/wove/pkg/wavebase"
 )
 
-// SessionApprovalRegistry tracks paths that the user has approved for reading
+// SessionApprovalRegistry tracks paths that the user has approved for reading or writing
 // during the current session. This is in-memory only and resets when the app restarts.
 type SessionApprovalRegistry struct {
-	mu            sync.RWMutex
-	approvedPaths map[string]bool // set of approved directory prefixes
+	mu                 sync.RWMutex
+	approvedReadPaths  map[string]bool // set of approved directory prefixes for reading
+	approvedWritePaths map[string]bool // set of approved directory prefixes for writing
 }
 
 var globalSessionApproval = &SessionApprovalRegistry{
-	approvedPaths: make(map[string]bool),
+	approvedReadPaths:  make(map[string]bool),
+	approvedWritePaths: make(map[string]bool),
 }
 
 // canonicalizePath expands ~, cleans, and resolves symlinks for a path.
@@ -54,7 +56,25 @@ func AddSessionReadApproval(dirPath string) {
 	logutil.DevPrintf("session read approval added: %s\n", canonical)
 	globalSessionApproval.mu.Lock()
 	defer globalSessionApproval.mu.Unlock()
-	globalSessionApproval.approvedPaths[canonical] = true
+	globalSessionApproval.approvedReadPaths[canonical] = true
+}
+
+// AddSessionWriteApproval adds a directory path to the session-level write approval list.
+// All files under this directory (and subdirectories) will be auto-approved for writing.
+// The path is canonicalized (symlinks resolved) to prevent bypass via symlinked directories.
+func AddSessionWriteApproval(dirPath string) {
+	canonical := canonicalizePath(dirPath)
+	if isSensitivePath(canonical) {
+		logutil.DevPrintf("session write approval rejected (sensitive path): %s\n", canonical)
+		return
+	}
+	if !strings.HasSuffix(canonical, string(filepath.Separator)) {
+		canonical += string(filepath.Separator)
+	}
+	logutil.DevPrintf("session write approval added: %s\n", canonical)
+	globalSessionApproval.mu.Lock()
+	defer globalSessionApproval.mu.Unlock()
+	globalSessionApproval.approvedWritePaths[canonical] = true
 }
 
 // isSensitivePath checks if a path is or falls under a sensitive directory
@@ -111,7 +131,25 @@ func IsSessionReadApproved(filePath string) bool {
 	}
 	globalSessionApproval.mu.RLock()
 	defer globalSessionApproval.mu.RUnlock()
-	for approvedDir := range globalSessionApproval.approvedPaths {
+	for approvedDir := range globalSessionApproval.approvedReadPaths {
+		if strings.HasPrefix(canonical, approvedDir) || canonical == strings.TrimSuffix(approvedDir, string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsSessionWriteApproved checks if a file path falls under any session-approved directory for writing.
+// The path is canonicalized (symlinks resolved) to prevent bypass.
+// Sensitive paths (e.g. ~/.ssh, ~/.aws) are never auto-approved.
+func IsSessionWriteApproved(filePath string) bool {
+	canonical := canonicalizePath(filePath)
+	if isSensitivePath(canonical) {
+		return false
+	}
+	globalSessionApproval.mu.RLock()
+	defer globalSessionApproval.mu.RUnlock()
+	for approvedDir := range globalSessionApproval.approvedWritePaths {
 		if strings.HasPrefix(canonical, approvedDir) || canonical == strings.TrimSuffix(approvedDir, string(filepath.Separator)) {
 			return true
 		}
@@ -123,16 +161,20 @@ func IsSessionReadApproved(filePath string) bool {
 func GetSessionApprovedPaths() []string {
 	globalSessionApproval.mu.RLock()
 	defer globalSessionApproval.mu.RUnlock()
-	paths := make([]string, 0, len(globalSessionApproval.approvedPaths))
-	for p := range globalSessionApproval.approvedPaths {
+	paths := make([]string, 0, len(globalSessionApproval.approvedReadPaths)+len(globalSessionApproval.approvedWritePaths))
+	for p := range globalSessionApproval.approvedReadPaths {
+		paths = append(paths, p)
+	}
+	for p := range globalSessionApproval.approvedWritePaths {
 		paths = append(paths, p)
 	}
 	return paths
 }
 
-// ClearSessionApprovals removes all session-level read approvals.
+// ClearSessionApprovals removes all session-level approvals (read and write).
 func ClearSessionApprovals() {
 	globalSessionApproval.mu.Lock()
 	defer globalSessionApproval.mu.Unlock()
-	globalSessionApproval.approvedPaths = make(map[string]bool)
+	globalSessionApproval.approvedReadPaths = make(map[string]bool)
+	globalSessionApproval.approvedWritePaths = make(map[string]bool)
 }

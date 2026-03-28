@@ -27,11 +27,11 @@ const AboutModalV = ({ versionString, updaterChannel, onClose }: AboutModalVProp
             <div className="flex flex-col gap-[26px] w-full relative z-10">
                 <div className="flex flex-col items-center justify-center gap-4 self-stretch w-full text-center">
                     <Logo />
-                    <div className="text-[25px]">Wave Terminal</div>
+                    <div className="text-[25px]">Wove Terminal</div>
                     <div className="leading-5">
-                        Open-Source AI-Integrated Terminal
+                        Open-Source Local Autonomous Developer
                         <br />
-                        Built for Seamless Workflows
+                        AI-Powered Coding Environment
                     </div>
                 </div>
                 <div className="items-center gap-4 self-stretch w-full text-center">
@@ -41,7 +41,7 @@ const AboutModalV = ({ versionString, updaterChannel, onClose }: AboutModalVProp
                 </div>
                 <div className="grid grid-cols-2 gap-[10px] self-stretch w-full">
                     <a
-                        href="https://github.com/wavetermdev/waveterm?ref=about"
+                        href="https://github.com/mits-pl/wove?ref=about"
                         target="_blank"
                         rel="noopener"
                         className="inline-flex items-center justify-center px-4 py-2 rounded border border-border hover:bg-hoverbg transition-colors duration-200"
@@ -57,7 +57,7 @@ const AboutModalV = ({ versionString, updaterChannel, onClose }: AboutModalVProp
                         <i className="fa-sharp fa-light fa-globe mr-2"></i>Website
                     </a>
                     <a
-                        href="https://github.com/wavetermdev/waveterm/blob/main/ACKNOWLEDGEMENTS.md"
+                        href="https://github.com/mits-pl/wove/blob/main/ACKNOWLEDGEMENTS.md"
                         target="_blank"
                         rel="noopener"
                         className="inline-flex items-center justify-center px-4 py-2 rounded border border-border hover:bg-hoverbg transition-colors duration-200"

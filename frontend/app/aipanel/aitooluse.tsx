@@ -113,9 +113,11 @@ interface AIToolApprovalButtonsProps {
     onDeny: () => void;
     onAllowSession?: () => void;
     showSessionButton?: boolean;
+    sessionButtonLabel?: string;
+    sessionButtonTitle?: string;
 }
 
-const AIToolApprovalButtons = memo(({ count, onApprove, onDeny, onAllowSession, showSessionButton }: AIToolApprovalButtonsProps) => {
+const AIToolApprovalButtons = memo(({ count, onApprove, onDeny, onAllowSession, showSessionButton, sessionButtonLabel, sessionButtonTitle }: AIToolApprovalButtonsProps) => {
     const approveText = count > 1 ? `Approve All (${count})` : "Approve";
     const denyText = count > 1 ? "Deny All" : "Deny";
 
@@ -131,9 +133,9 @@ const AIToolApprovalButtons = memo(({ count, onApprove, onDeny, onAllowSession, 
                 <button
                     onClick={onAllowSession}
                     className="px-3 py-1 border border-green-700 text-green-400 hover:border-green-500 hover:text-green-300 text-sm rounded cursor-pointer transition-colors"
-                    title="Auto-approve all file reads under this directory for the rest of this session"
+                    title={sessionButtonTitle || "Auto-approve all file operations under this directory for the rest of this session"}
                 >
-                    Allow reading in this session
+                    {sessionButtonLabel || "Allow in this session"}
                 </button>
             )}
             <button
@@ -202,23 +204,37 @@ const AIToolUseBatch = memo(({ parts, isStreaming }: AIToolUseBatchProps) => {
         });
     };
 
+    const isReadOp = parts.some(
+        (p) => p.data.toolname === "read_text_file" || p.data.toolname === "read_dir"
+    );
+    const isWriteOp = parts.some(
+        (p) => p.data.toolname === "write_text_file" || p.data.toolname === "edit_text_file"
+    );
+
     const handleAllowSession = () => {
         const dirs = extractDirsFromParts(parts);
         const model = WaveAIModel.getInstance();
         for (const dir of dirs) {
-            model.sessionReadApprove(dir);
+            if (isReadOp) {
+                model.sessionReadApprove(dir);
+            }
+            if (isWriteOp) {
+                model.sessionWriteApprove(dir);
+            }
         }
         handleApprove();
     };
 
-    const isReadOp = parts.some(
-        (p) => p.data.toolname === "read_text_file" || p.data.toolname === "read_dir"
-    );
+    const batchLabel = isWriteOp ? "Writing Files" : "Reading Files";
+    const sessionButtonLabel = isWriteOp ? "Allow writing in this session" : "Allow reading in this session";
+    const sessionButtonTitle = isWriteOp
+        ? "Auto-approve all file writes under this directory for the rest of this session"
+        : "Auto-approve all file reads under this directory for the rest of this session";
 
     return (
         <div className="flex items-start gap-2 p-2 rounded bg-zinc-800/60 border border-zinc-700">
             <div className="flex-1">
-                <div className="font-semibold">Reading Files</div>
+                <div className="font-semibold">{batchLabel}</div>
                 <div className="mt-1 space-y-0.5">
                     {parts.map((part, idx) => (
                         <AIToolUseBatchItem key={idx} part={part} effectiveApproval={effectiveApproval} />
@@ -230,7 +246,9 @@ const AIToolUseBatch = memo(({ parts, isStreaming }: AIToolUseBatchProps) => {
                         onApprove={handleApprove}
                         onDeny={handleDeny}
                         onAllowSession={handleAllowSession}
-                        showSessionButton={isReadOp}
+                        showSessionButton={isReadOp || isWriteOp}
+                        sessionButtonLabel={sessionButtonLabel}
+                        sessionButtonTitle={sessionButtonTitle}
                     />
                 )}
             </div>

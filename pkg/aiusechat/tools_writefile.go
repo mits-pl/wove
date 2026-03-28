@@ -219,6 +219,17 @@ func GetWriteTextFileToolDefinition() uctypes.ToolDefinition {
 		},
 		ToolAnyCallback: writeTextFileCallback,
 		ToolApproval: func(input any) string {
+			params, err := parseWriteTextFileInput(input)
+			if err != nil {
+				return uctypes.ApprovalNeedsApproval
+			}
+			expandedPath, err := wavebase.ExpandHomeDir(params.Filename)
+			if err != nil {
+				return uctypes.ApprovalNeedsApproval
+			}
+			if IsSessionWriteApproved(expandedPath) {
+				return uctypes.ApprovalAutoApproved
+			}
 			return uctypes.ApprovalNeedsApproval
 		},
 		ToolVerifyInput: verifyWriteTextFileInput,
@@ -436,6 +447,17 @@ func GetEditTextFileToolDefinition() uctypes.ToolDefinition {
 		},
 		ToolAnyCallback: editTextFileCallback,
 		ToolApproval: func(input any) string {
+			params, err := parseEditTextFileInput(input)
+			if err != nil {
+				return uctypes.ApprovalNeedsApproval
+			}
+			expandedPath, err := wavebase.ExpandHomeDir(params.Filename)
+			if err != nil {
+				return uctypes.ApprovalNeedsApproval
+			}
+			if IsSessionWriteApproved(expandedPath) {
+				return uctypes.ApprovalAutoApproved
+			}
 			return uctypes.ApprovalNeedsApproval
 		},
 		ToolVerifyInput: verifyEditTextFileInput,

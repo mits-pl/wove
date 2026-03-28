@@ -568,7 +568,7 @@ const Widgets = memo(() => {
                 {env.isDev() ? (
                     <div
                         className="flex justify-center items-center w-full py-1 text-accent text-[30px]"
-                        title="Running Wave Dev Build"
+                        title="Running Wove Dev Build"
                     >
                         <i className="fa fa-brands fa-dev fa-fw" />
                     </div>
@@ -615,7 +615,7 @@ const Widgets = memo(() => {
                 {env.isDev() ? (
                     <div
                         className="flex justify-center items-center w-full py-1 text-accent text-[30px]"
-                        title="Running Wave Dev Build"
+                        title="Running Wove Dev Build"
                     >
                         <i className="fa fa-brands fa-dev fa-fw" />
                     </div>

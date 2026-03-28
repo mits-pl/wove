@@ -6,7 +6,7 @@ const UpgradeOnboardingModal_v0_13_1_Content = () => {
         <div className="flex flex-col items-start gap-6 w-full mb-4 unselectable">
             <div className="text-secondary leading-relaxed">
                 <p className="mb-0">
-                    Wave v0.13.1 focuses on Windows platform improvements, Wove AI visual updates, and enhanced
+                    Wove v0.13.1 focuses on Windows platform improvements, Wove AI visual updates, and enhanced
                     terminal navigation.
                 </p>
             </div>

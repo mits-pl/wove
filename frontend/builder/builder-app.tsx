@@ -43,7 +43,7 @@ function BuilderAppInner() {
                 style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
             >
                 {isDev() ? (
-                    <div className="text-accent text-xl" title="Running Wave Dev Build">
+                    <div className="text-accent text-xl" title="Running Wove Dev Build">
                         <i className="fa fa-brands fa-dev fa-fw" />
                     </div>
                 ) : null}

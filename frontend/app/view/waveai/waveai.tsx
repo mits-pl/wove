@@ -232,7 +232,7 @@ export class WaveAiModel implements ViewModel {
                         viewTextChildren.push({
                             elemtype: "iconbutton",
                             icon: "cloud",
-                            title: "Using Wave's AI Proxy (gpt-5-mini)",
+                            title: "Using Wove's AI Proxy (gpt-5-mini)",
                             noAction: true,
                         });
                     } else {

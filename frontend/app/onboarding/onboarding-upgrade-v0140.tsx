@@ -9,7 +9,7 @@ const UpgradeOnboardingModal_v0_14_0_Content = () => {
         <div className="flex flex-col items-start w-full mb-2 unselectable">
             <div className="text-secondary leading-relaxed mb-4">
                 <p className="mb-0">
-                    Wave v0.14 introduces Durable Sessions. Enable them to keep your remote sessions alive through
+                    Wove v0.14 introduces Durable Sessions. Enable them to keep your remote sessions alive through
                     network interruptions, computer sleep, and restarts — they'll automatically reconnect when your
                     connection is restored.
                 </p>

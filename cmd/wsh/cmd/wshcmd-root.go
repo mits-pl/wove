@@ -20,8 +20,8 @@ import (
 var (
 	rootCmd = &cobra.Command{
 		Use:          "wsh",
-		Short:        "CLI tool to control Wave Terminal",
-		Long:         `wsh is a small utility that lets you do cool things with Wave Terminal, right from the command line`,
+		Short:        "CLI tool to control Wove Terminal",
+		Long:         `wsh is a small utility that lets you do cool things with Wove Terminal, right from the command line`,
 		SilenceUsage: true,
 	}
 )
@@ -84,7 +84,7 @@ func OutputHelpMessage(cmd *cobra.Command) {
 func preRunSetupRpcClient(cmd *cobra.Command, args []string) error {
 	jwtToken := os.Getenv(wshutil.WaveJwtTokenVarName)
 	if jwtToken == "" {
-		return fmt.Errorf("wsh must be run inside a Wave-managed SSH session (WAVETERM_JWT not found)")
+		return fmt.Errorf("wsh must be run inside a Wove-managed SSH session (WAVETERM_JWT not found)")
 	}
 	err := setupRpcClient(nil, jwtToken)
 	if err != nil {

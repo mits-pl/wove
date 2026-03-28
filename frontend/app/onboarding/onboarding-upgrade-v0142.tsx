@@ -9,7 +9,7 @@ const UpgradeOnboardingModal_v0_14_2_Content = () => {
         <div className="flex flex-col items-start w-full mb-2 unselectable">
             <div className="text-secondary leading-relaxed mb-4">
                 <p className="mb-0">
-                    Wave v0.14.2 introduces a new block badge system for at-a-glance status, along with directory
+                    Wove v0.14.2 introduces a new block badge system for at-a-glance status, along with directory
                     preview improvements and bug fixes. v0.14.3 is a patch release fixing a showstopper bug in
                     onboarding.
                 </p>

@@ -193,7 +193,7 @@ const AIBuilderWelcomeMessage = memo(() => {
             </div>
             <div className="mt-4 text-left max-w-md mx-auto">
                 <p className="text-sm mb-6">
-                    The WaveApp builder helps create wave widgets that integrate seamlessly into Wave Terminal.
+                    The WaveApp builder helps create wave widgets that integrate seamlessly into Wove Terminal.
                 </p>
             </div>
         </div>
