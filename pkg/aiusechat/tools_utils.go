@@ -21,7 +21,7 @@ import (
 func GetWaveUtilsToolDefinition(tabId string) uctypes.ToolDefinition {
 	return uctypes.ToolDefinition{
 		Name:             "wave_utils",
-		DisplayName:      "Wave Utilities",
+		DisplayName:      "Wove Utilities",
 		Description: "Utility tool. Actions: " +
 			"session_history - previous session; " +
 			"project_instructions - read WAVE.md/CLAUDE.md/AGENTS.md for project conventions, architecture rules, and coding standards (params: sections, file_ext). ALWAYS call this before writing code to learn the project's required patterns; " +
