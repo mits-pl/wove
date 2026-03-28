@@ -112,6 +112,41 @@ This document lists all modifications and additions made in Wove.
 - Secret-based preset filtering (hide unconfigured models)
 - Ollama connectivity check
 
+## Repo Map (Tree-Sitter)
+- `repomap` package using `gotreesitter` (pure Go, no CGO) for structural codebase awareness
+- Extracts class/function/method/type definitions from source files
+- Supports Go, PHP, JS, TS, TSX, Python, Rust, Vue
+- Injected into system prompt on first message — AI knows what's where without exploratory tool calls
+- Cached for 5 minutes per directory (instant on subsequent messages)
+- Pre-compiled tree-sitter queries per extension (`sync.Once`)
+- Concurrent file parsing (4 workers), max 150 files, 15-second timeout with fallback to directory tree
+
+## Three-Tier Context Architecture
+- **Critical rules**: Prioritizes dedicated `## Rules` / `## Critical Rules` sections from WAVE.md before keyword matching (`must`/`always`/`never`)
+- **Warm context**: Technology-filtered conventions from instruction files based on project's dominant language
+- `DetectDominantExt` scans project to find the most common source file extension for filtering
+- Warm context injected on first message only (not every message)
+
+## Read-Before-Write Enforcement
+- `ReadTracker` module tracks files read during AI session
+- `edit_text_file` and `write_text_file` fail if file wasn't read first (prevents blind overwrites)
+- New files exempt from write check
+- `term_run_command` output enriched with `cwd` and `git_branch` for context
+- Context overflow warning injected after 8+ API requests, suggesting sub-tasks
+
+## Token Usage Display
+- `stream_options.include_usage` sent in OpenAI-compatible chat completions requests
+- Usage parsed from final stream chunk (input/output/total tokens)
+- `data-usage` SSE event sent to frontend after each AI step
+- Token count rendered under AI messages in gray text
+
+## Session Write Auto-Approve
+- `AddSessionWriteApproval()` / `IsSessionWriteApproved()` — session-level directory approval for file writes
+- `write_text_file` and `edit_text_file` check write approval before requiring manual confirm
+- Sensitive path protection (same as read: `~/.ssh`, `~/.aws`, etc.)
+- "Allow writing in this session" button in AI tool approval UI
+- New RPC command `WaveAISessionWriteApproveCommand`
+
 ## System Prompt Optimization
 - "Senior software engineer" role for better code quality
 - "Read sibling files before writing" pattern matching
