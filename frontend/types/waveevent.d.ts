@@ -27,6 +27,7 @@ declare global {
         | "block:jobstatus"
         | "badge"
         | "rtinfo:update"
+        | "waveai:modifiedfile"
     ;
 
     type WaveEvent = {
@@ -55,7 +56,8 @@ declare global {
         { event: "waveai:modeconfig"; data?: AIModeConfigUpdate; } | 
         { event: "block:jobstatus"; data?: BlockJobStatusData; } | 
         { event: "badge"; data?: BadgeEvent; } | 
-        { event: "rtinfo:update"; data?: RTInfoUpdateData; }
+        { event: "rtinfo:update"; data?: RTInfoUpdateData; } | 
+        { event: "waveai:modifiedfile"; data?: WaveAIModifiedFileEntry; }
     );
 
 }

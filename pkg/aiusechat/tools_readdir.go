@@ -53,19 +53,30 @@ func parseReadDirInput(input any) (*readDirParams, error) {
 	return result, nil
 }
 
+func resolveToAbsolutePath(path string) (string, error) {
+	expandedPath, err := wavebase.ExpandHomeDir(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to expand path: %w", err)
+	}
+	if !filepath.IsAbs(expandedPath) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("path must be absolute, got relative path: %s", path)
+		}
+		expandedPath = filepath.Join(cwd, expandedPath)
+	}
+	return filepath.Clean(expandedPath), nil
+}
+
 func verifyReadDirInput(input any, toolUseData *uctypes.UIMessageDataToolUse) error {
 	params, err := parseReadDirInput(input)
 	if err != nil {
 		return err
 	}
 
-	expandedPath, err := wavebase.ExpandHomeDir(params.Path)
+	expandedPath, err := resolveToAbsolutePath(params.Path)
 	if err != nil {
-		return fmt.Errorf("failed to expand path: %w", err)
-	}
-
-	if !filepath.IsAbs(expandedPath) {
-		return fmt.Errorf("path must be absolute, got relative path: %s", params.Path)
+		return err
 	}
 
 	fileInfo, err := os.Stat(expandedPath)
@@ -86,16 +97,12 @@ func readDirCallback(input any, toolUseData *uctypes.UIMessageDataToolUse) (any,
 		return nil, err
 	}
 
-	expandedPath, err := wavebase.ExpandHomeDir(params.Path)
+	expandedPath, err := resolveToAbsolutePath(params.Path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to expand path: %w", err)
+		return nil, err
 	}
 
-	if !filepath.IsAbs(expandedPath) {
-		return nil, fmt.Errorf("path must be absolute, got relative path: %s", params.Path)
-	}
-
-	result, err := fileutil.ReadDir(params.Path, *params.MaxEntries)
+	result, err := fileutil.ReadDir(expandedPath, *params.MaxEntries)
 	if err != nil {
 		return nil, err
 	}

@@ -135,7 +135,7 @@ func GetFilteredContext(pi *ProjectInstructions, fileExt string) string {
 	result := sb.String()
 
 	// Truncate if too long
-	const maxLen = 8000
+	const maxLen = 30000
 	if len(result) > maxLen {
 		result = result[:maxLen] + "\n... [truncated]\n</project_instructions>"
 	}

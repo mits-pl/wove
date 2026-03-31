@@ -260,6 +260,133 @@ type EditResult struct {
 }
 
 // applyEdit applies a single edit to the content and returns the modified content and result.
+// normalizeWhitespace collapses all runs of whitespace into a single space and trims.
+func normalizeWhitespace(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// findNormalizedMatch finds the position and length of old_str in content using whitespace-normalized matching.
+// Returns (start, length, found). The returned start/length refer to the original content bytes.
+func findNormalizedMatch(content []byte, oldStr string) (int, int, bool) {
+	normalizedOld := normalizeWhitespace(oldStr)
+	if normalizedOld == "" {
+		return 0, 0, false
+	}
+
+	contentStr := string(content)
+	contentLines := strings.Split(contentStr, "\n")
+
+	// Build a sliding window over lines to find the normalized match.
+	// The old_str typically spans a range of lines.
+	oldLines := strings.Split(oldStr, "\n")
+	numOldLines := len(oldLines)
+
+	var matches []struct{ start, end int }
+
+	for i := 0; i <= len(contentLines)-numOldLines; i++ {
+		candidate := strings.Join(contentLines[i:i+numOldLines], "\n")
+		if normalizeWhitespace(candidate) == normalizedOld {
+			// Calculate byte offset
+			byteStart := 0
+			for j := 0; j < i; j++ {
+				byteStart += len(contentLines[j]) + 1 // +1 for \n
+			}
+			byteEnd := byteStart
+			for j := i; j < i+numOldLines; j++ {
+				byteEnd += len(contentLines[j])
+				if j < i+numOldLines-1 {
+					byteEnd += 1 // +1 for \n
+				}
+			}
+			matches = append(matches, struct{ start, end int }{byteStart, byteEnd})
+		}
+	}
+
+	if len(matches) == 1 {
+		m := matches[0]
+		return m.start, m.end - m.start, true
+	}
+	return 0, 0, false
+}
+
+// findClosestContext finds the most similar region in content to old_str and returns context lines around it.
+func findClosestContext(content []byte, oldStr string) string {
+	oldLines := strings.Split(oldStr, "\n")
+	if len(oldLines) == 0 {
+		return ""
+	}
+
+	// Search for the first line of old_str (normalized) in the file
+	firstLine := normalizeWhitespace(oldLines[0])
+	if firstLine == "" && len(oldLines) > 1 {
+		firstLine = normalizeWhitespace(oldLines[1])
+	}
+	if firstLine == "" {
+		return ""
+	}
+
+	contentLines := strings.Split(string(content), "\n")
+	bestLine := -1
+	bestScore := 0
+
+	for i, line := range contentLines {
+		normalized := normalizeWhitespace(line)
+		score := longestCommonSubstring(firstLine, normalized)
+		if score > bestScore {
+			bestScore = score
+			bestLine = i
+		}
+	}
+
+	// Only show context if we found a reasonable match (at least 40% of first line)
+	if bestLine < 0 || bestScore < len(firstLine)*4/10 {
+		return ""
+	}
+
+	// Show a window of lines around the best match
+	start := bestLine - 1
+	if start < 0 {
+		start = 0
+	}
+	end := bestLine + len(oldLines) + 1
+	if end > len(contentLines) {
+		end = len(contentLines)
+	}
+
+	var sb strings.Builder
+	for i := start; i < end; i++ {
+		sb.WriteString(fmt.Sprintf("  %d: %s\n", i+1, contentLines[i]))
+	}
+	return sb.String()
+}
+
+func longestCommonSubstring(a, b string) int {
+	if len(a) == 0 || len(b) == 0 {
+		return 0
+	}
+	// Truncate to avoid O(n^2) on large strings
+	const maxLen = 200
+	if len(a) > maxLen {
+		a = a[:maxLen]
+	}
+	if len(b) > maxLen {
+		b = b[:maxLen]
+	}
+	best := 0
+	for i := 0; i < len(a); i++ {
+		for j := 0; j < len(b); j++ {
+			k := 0
+			for i+k < len(a) && j+k < len(b) && a[i+k] == b[j+k] {
+				k++
+			}
+			if k > best {
+				best = k
+			}
+		}
+	}
+	return best
+}
+
 func applyEdit(content []byte, edit EditSpec, index int) ([]byte, EditResult) {
 	result := EditResult{
 		Desc: edit.Desc,
@@ -276,20 +403,41 @@ func applyEdit(content []byte, edit EditSpec, index int) ([]byte, EditResult) {
 
 	oldBytes := []byte(edit.OldStr)
 	count := bytes.Count(content, oldBytes)
-	if count == 0 {
-		result.Applied = false
-		result.Error = "old_str not found in file"
-		return content, result
+
+	// Exact match found
+	if count == 1 {
+		modifiedContent := bytes.Replace(content, oldBytes, []byte(edit.NewStr), 1)
+		result.Applied = true
+		return modifiedContent, result
 	}
+
 	if count > 1 {
 		result.Applied = false
 		result.Error = fmt.Sprintf("old_str appears %d times, must appear exactly once", count)
 		return content, result
 	}
 
-	modifiedContent := bytes.Replace(content, oldBytes, []byte(edit.NewStr), 1)
-	result.Applied = true
-	return modifiedContent, result
+	// count == 0: exact match not found — try whitespace-normalized match
+	start, length, found := findNormalizedMatch(content, edit.OldStr)
+	if found {
+		// Replace the original content at the matched position
+		modifiedContent := make([]byte, 0, len(content)-length+len(edit.NewStr))
+		modifiedContent = append(modifiedContent, content[:start]...)
+		modifiedContent = append(modifiedContent, []byte(edit.NewStr)...)
+		modifiedContent = append(modifiedContent, content[start+length:]...)
+		result.Applied = true
+		return modifiedContent, result
+	}
+
+	// No match at all — provide helpful context
+	result.Applied = false
+	context := findClosestContext(content, edit.OldStr)
+	if context != "" {
+		result.Error = fmt.Sprintf("old_str not found in file. Closest region in file:\n%s", context)
+	} else {
+		result.Error = "old_str not found in file"
+	}
+	return content, result
 }
 
 // ApplyEdits applies a series of edits to the given content and returns the modified content.

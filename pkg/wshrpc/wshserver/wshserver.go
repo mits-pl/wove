@@ -1336,6 +1336,22 @@ func (ws *WshServer) WaveAIGetToolDiffCommand(ctx context.Context, data wshrpc.C
 	}, nil
 }
 
+func (ws *WshServer) WaveAIGetModifiedFilesCommand(ctx context.Context, data wshrpc.CommandWaveAIGetModifiedFilesData) (*wshrpc.CommandWaveAIGetModifiedFilesRtnData, error) {
+	if data.ChatId == "" {
+		return nil, fmt.Errorf("chatid is required")
+	}
+	entries := aiusechat.GetModifiedFiles(data.ChatId)
+	files := make([]wshrpc.WaveAIModifiedFileEntry, len(entries))
+	for i, e := range entries {
+		files[i] = wshrpc.WaveAIModifiedFileEntry{
+			FilePath:  e.FilePath,
+			Action:    e.Action,
+			Timestamp: e.Timestamp,
+		}
+	}
+	return &wshrpc.CommandWaveAIGetModifiedFilesRtnData{Files: files}, nil
+}
+
 var wshActivityRe = regexp.MustCompile(`^[a-z:#]+$`)
 
 func (ws *WshServer) WshActivityCommand(ctx context.Context, data map[string]int) error {

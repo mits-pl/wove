@@ -425,10 +425,10 @@ export class WaveBrowserWindow extends BaseWindow {
             return promise;
         }
         let timeoutHandle: ReturnType<typeof setTimeout> = null;
-        const timeoutPromise = new Promise<never>((_, reject) => {
+        const timeoutFired = new Promise<void>((resolve) => {
             timeoutHandle = setTimeout(() => {
                 console.log(
-                    `[dev] ${name} timed out after ${DevInitTimeoutMs}ms for tab ${tabId}, showing window for devtools`
+                    `[dev] ${name} still pending after ${DevInitTimeoutMs}ms for tab ${tabId}, showing window for devtools`
                 );
                 if (!this.isDestroyed() && !this.isVisible()) {
                     this.show();
@@ -436,11 +436,12 @@ export class WaveBrowserWindow extends BaseWindow {
                 if (this.activeTabView?.webContents && !this.activeTabView.webContents.isDevToolsOpened()) {
                     this.activeTabView.webContents.openDevTools();
                 }
-                reject(new Error(`[dev] ${name} timed out after ${DevInitTimeoutMs}ms`));
+                resolve();
             }, DevInitTimeoutMs);
         });
+        timeoutFired.then(() => {}); // fire-and-forget, don't block
         try {
-            return await Promise.race([promise, timeoutPromise]);
+            return await promise;
         } finally {
             clearTimeout(timeoutHandle);
         }

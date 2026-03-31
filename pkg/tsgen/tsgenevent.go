@@ -42,6 +42,7 @@ var WaveEventDataTypes = map[string]reflect.Type{
 	wps.Event_BlockJobStatus:      reflect.TypeOf(wshrpc.BlockJobStatusData{}),
 	wps.Event_Badge:               reflect.TypeOf(baseds.BadgeEvent{}),
 	wps.Event_RTInfoUpdate:        reflect.TypeOf((*wps.RTInfoUpdateData)(nil)),
+	wps.Event_AIModifiedFile:      reflect.TypeOf(wshrpc.WaveAIModifiedFileEntry{}),
 }
 
 func getWaveEventDataTSType(eventName string, tsTypesMap map[reflect.Type]string) string {

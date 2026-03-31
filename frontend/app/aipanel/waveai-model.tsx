@@ -707,6 +707,21 @@ export class WaveAIModel {
         await createBlock(blockDef, false, true);
     }
 
+    async openModifiedFiles() {
+        const chatId = this.getChatId();
+        if (!chatId) {
+            console.error("Missing chatId for opening modified files");
+            return;
+        }
+        const blockDef: BlockDef = {
+            meta: {
+                view: "aimodifiedfiles",
+                "aimodifiedfiles:chatid": chatId,
+            },
+        };
+        await createBlock(blockDef, false, true);
+    }
+
     async openWaveAIConfig() {
         const blockDef: BlockDef = {
             meta: {

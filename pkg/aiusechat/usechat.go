@@ -321,6 +321,21 @@ func processToolCallInternal(backend UseChatBackend, toolCall uctypes.WaveToolCa
 		toolCall.ToolUseData.ErrorMessage = result.ErrorText
 	} else {
 		toolCall.ToolUseData.Status = uctypes.ToolUseStatusCompleted
+		// Track modified files for the session
+		if toolCall.ToolUseData.InputFileName != "" {
+			var action string
+			switch toolCall.Name {
+			case "write_text_file":
+				action = "write"
+			case "edit_text_file":
+				action = "edit"
+			case "delete_text_file":
+				action = "delete"
+			}
+			if action != "" {
+				TrackModifiedFile(chatOpts.ChatId, toolCall.ToolUseData.InputFileName, action)
+			}
+		}
 	}
 
 	return result
@@ -517,8 +532,8 @@ func RunAIChat(ctx context.Context, sseHandler *sse.SSEHandlerCh, backend UseCha
 			metrics.ToolUseCount += len(stopReason.ToolCalls)
 			processAllToolCalls(backend, stopReason, chatOpts, sseHandler, metrics)
 			// Compact old tool results to prevent context window overflow.
-			// Keep the 4 most recent tool results at full length, truncate older ones to 500 chars.
-			chatstore.DefaultChatStore.CompactOldToolResults(chatOpts.ChatId, 4, 500)
+			// Keep the 6 most recent tool results at full length, truncate older ones to 2000 chars.
+			chatstore.DefaultChatStore.CompactOldToolResults(chatOpts.ChatId, 6, 2000)
 			// Context usage warning: after many iterations, remind the model to use sub-tasks
 			if metrics.RequestCount >= 8 && chatOpts.SubTaskDepth == 0 {
 				contextHint := fmt.Sprintf("<context_warning>You have made %d API requests in this conversation. Context window may be filling up. For remaining complex steps, consider using run_sub_task to execute them in isolated conversations to prevent context overflow.</context_warning>", metrics.RequestCount)
@@ -765,6 +780,8 @@ func WaveAIPostMessageHandler(w http.ResponseWriter, r *http.Request) {
 			// Auto-approve reads under the tab's working directory for this session.
 			// Sensitive paths (.ssh, .aws, etc.) are still blocked by sessionapproval.go.
 			AddSessionReadApproval(cwd)
+			// Explicit CWD in system prompt so model knows absolute paths
+			chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, fmt.Sprintf("<working_directory>%s</working_directory>", cwd))
 			// Project stack info (name, tech stack, architecture) - always injected (~50 tokens)
 			if stack := projectctx.ExtractProjectStack(cwd); stack != "" {
 				chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, stack)
@@ -773,12 +790,22 @@ func WaveAIPostMessageHandler(w http.ResponseWriter, r *http.Request) {
 			if rules := projectctx.ExtractCriticalRules(cwd); rules != "" {
 				chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, rules)
 			}
-			// First message only: warm context + repo map + hints
+			// Git context (branch, modified files, recent commits) - always injected (~200 tokens)
+			if gitCtx := projectctx.ExtractGitContext(cwd); gitCtx != "" {
+				chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, gitCtx)
+			}
+			// First message only: full project instructions + repo map + hints
 			if chatstore.DefaultChatStore.CountUserMessages(req.ChatID) == 0 {
-				// Warm tier: technology-specific conventions from WAVE.md/CLAUDE.md
-				if dominantExt := projectctx.DetectDominantExt(cwd); dominantExt != "" {
-					if warmCtx := projectctx.ExtractWarmContext(cwd, dominantExt, 3000); warmCtx != "" {
-						chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, warmCtx)
+				// Inject full project instructions from all instruction files
+				instrFiles := projectctx.FindAllInstructionsFiles(cwd)
+				for _, filePath := range instrFiles {
+					pi, err := projectctx.ParseInstructions(filePath)
+					if err != nil || pi == nil {
+						continue
+					}
+					fullCtx := projectctx.GetFullContext(pi)
+					if fullCtx != "" {
+						chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, fullCtx)
 					}
 				}
 				// Repo map with timeout (tree-sitter parsing can be slow on large projects)
@@ -802,8 +829,8 @@ func WaveAIPostMessageHandler(w http.ResponseWriter, r *http.Request) {
 				}
 				// Hints about available context (compact)
 				var hints []string
-				if projectctx.FindInstructionsFile(cwd) != "" {
-					hints = append(hints, "project_instructions available via wave_utils")
+				if len(instrFiles) > 0 {
+					hints = append(hints, "full project instructions loaded above — use wave_utils(action='project_instructions') only to re-read specific sections")
 				}
 				if sessionhistory.LoadSessionHistory(req.TabId) != "" {
 					hints = append(hints, "previous session history available via wave_utils(action='session_history')")

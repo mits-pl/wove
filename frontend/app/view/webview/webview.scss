@@ -42,10 +42,128 @@
 
     input {
         opacity: 1;
+        font-size: 13px;
     }
 
     .wave-iconbutton {
         width: fit-content !important;
         margin-right: 5px;
+        font-size: 15px;
     }
+}
+
+// Console panel
+.webview-console {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 200px;
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    background: rgba(15, 15, 20, 0.97);
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+    font-size: 12px;
+}
+
+.webview-console-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    background: rgba(255, 255, 255, 0.04);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    flex-shrink: 0;
+}
+
+.webview-console-title {
+    font-weight: 600;
+    color: var(--main-text-color);
+    font-size: 11px;
+}
+
+.webview-console-count {
+    font-size: 10px;
+    color: var(--secondary-text-color);
+    background: rgba(255, 255, 255, 0.08);
+    padding: 0 5px;
+    border-radius: 8px;
+}
+
+.webview-console-clear,
+.webview-console-close {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--secondary-text-color);
+    cursor: pointer;
+    padding: 2px 4px;
+    font-size: 11px;
+
+    &:hover {
+        color: var(--main-text-color);
+    }
+}
+
+.webview-console-clear {
+    margin-left: auto;
+}
+
+.webview-console-close {
+    margin-left: 0;
+}
+
+.webview-console-logs {
+    flex: 1;
+    overflow-y: auto;
+    padding: 2px 0;
+}
+
+.webview-console-empty {
+    color: var(--secondary-text-color);
+    font-style: italic;
+    padding: 8px;
+}
+
+.webview-console-entry {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 2px 8px;
+    color: #e2e8f0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    line-height: 1.5;
+
+    i {
+        flex-shrink: 0;
+        margin-top: 3px;
+        font-size: 10px;
+    }
+
+    &.console-warn {
+        color: #fbbf24;
+        background: rgba(251, 191, 36, 0.05);
+    }
+
+    &.console-error {
+        color: #f87171;
+        background: rgba(248, 113, 113, 0.08);
+    }
+
+    &.console-debug {
+        color: #94a3b8;
+    }
+}
+
+.webview-console-msg {
+    white-space: pre-wrap;
+    word-break: break-word;
+    min-width: 0;
+}
+
+// Error badge on console button
+.has-errors {
+    color: var(--error-color) !important;
 }

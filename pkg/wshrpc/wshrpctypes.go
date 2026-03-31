@@ -162,6 +162,7 @@ type WshRpcInterface interface {
 	WaveAISessionWriteApproveCommand(ctx context.Context, data CommandWaveAISessionWriteApproveData) error
 	WaveAIAddContextCommand(ctx context.Context, data CommandWaveAIAddContextData) error
 	WaveAIGetToolDiffCommand(ctx context.Context, data CommandWaveAIGetToolDiffData) (*CommandWaveAIGetToolDiffRtnData, error)
+	WaveAIGetModifiedFilesCommand(ctx context.Context, data CommandWaveAIGetModifiedFilesData) (*CommandWaveAIGetModifiedFilesRtnData, error)
 
 	// screenshot
 	CaptureBlockScreenshotCommand(ctx context.Context, data CommandCaptureBlockScreenshotData) (string, error)
@@ -586,6 +587,20 @@ type CommandWaveAIGetToolDiffData struct {
 type CommandWaveAIGetToolDiffRtnData struct {
 	OriginalContents64 string `json:"originalcontents64"`
 	ModifiedContents64 string `json:"modifiedcontents64"`
+}
+
+type CommandWaveAIGetModifiedFilesData struct {
+	ChatId string `json:"chatid"`
+}
+
+type WaveAIModifiedFileEntry struct {
+	FilePath  string `json:"filepath"`
+	Action    string `json:"action"`
+	Timestamp int64  `json:"timestamp"`
+}
+
+type CommandWaveAIGetModifiedFilesRtnData struct {
+	Files []WaveAIModifiedFileEntry `json:"files"`
 }
 
 type CommandCaptureBlockScreenshotData struct {

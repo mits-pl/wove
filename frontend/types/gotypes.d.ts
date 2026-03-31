@@ -712,6 +712,16 @@ declare global {
         newchat?: boolean;
     };
 
+    // wshrpc.CommandWaveAIGetModifiedFilesData
+    type CommandWaveAIGetModifiedFilesData = {
+        chatid: string;
+    };
+
+    // wshrpc.CommandWaveAIGetModifiedFilesRtnData
+    type CommandWaveAIGetModifiedFilesRtnData = {
+        files: WaveAIModifiedFileEntry[];
+    };
+
     // wshrpc.CommandWaveAIGetToolDiffData
     type CommandWaveAIGetToolDiffData = {
         chatid: string;
@@ -1136,6 +1146,7 @@ declare global {
         "ai:timeoutms"?: number;
         "aifilediff:chatid"?: string;
         "aifilediff:toolcallid"?: string;
+        "aimodifiedfiles:chatid"?: string;
         "editor:*"?: boolean;
         "editor:minimapenabled"?: boolean;
         "editor:stickyscrollenabled"?: boolean;
@@ -1967,6 +1978,13 @@ declare global {
     // wconfig.WatcherUpdate
     type WatcherUpdate = {
         fullconfig: FullConfigType;
+    };
+
+    // wshrpc.WaveAIModifiedFileEntry
+    type WaveAIModifiedFileEntry = {
+        filepath: string;
+        action: string;
+        timestamp: number;
     };
 
     // wshrpc.WaveAIOptsType

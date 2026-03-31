@@ -36,6 +36,7 @@ const (
 	Event_Badge               = "badge"                // type: baseds.BadgeEvent
 	Event_RTInfoUpdate        = "rtinfo:update"        // type: *RTInfoUpdateData
 	Event_SubTaskUpdate       = "subtask:update"       // type: *SubTaskUpdateData
+	Event_AIModifiedFile      = "waveai:modifiedfile"  // type: wshrpc.WaveAIModifiedFileEntry
 )
 
 var AllEvents []string = []string{
@@ -59,6 +60,7 @@ var AllEvents []string = []string{
 	Event_BlockJobStatus,
 	Event_Badge,
 	Event_RTInfoUpdate,
+	Event_AIModifiedFile,
 }
 
 type WaveEvent struct {

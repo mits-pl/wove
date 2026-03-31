@@ -1,0 +1,300 @@
+{
+  "version": "2.0.0",
+  "name": "Wove SEO Audit Schema",
+  "description": "Comprehensive SEO audit plan for Wove AI terminal. Combines real-browser execution (web_exec_js, web_click, web_type_input) with deep SEO knowledge. The agent selects checks based on site_type, industry_vertical, and audit_level, executes them using Wove tools, and produces a structured report. Based on Wove tools + claude-seo knowledge (MIT license, AgriciDaniel).",
+
+  "site_types": {
+    "ecommerce": {
+      "label": "E-commerce / Online Store",
+      "detection_signals": ["/products", "/collections", "/cart", "add to cart", "Product schema", "price", "checkout"],
+      "priority_categories": ["structured_data", "technical_performance", "content_structure", "conversion_trust", "ai_search_readiness"]
+    },
+    "saas": {
+      "label": "SaaS / Web Application",
+      "detection_signals": ["/pricing", "/features", "/integrations", "/docs", "free trial", "sign up", "dashboard"],
+      "priority_categories": ["technical_performance", "content_structure", "authority_eeat", "conversion_trust", "ai_search_readiness"]
+    },
+    "blog": {
+      "label": "Blog / Content Site / News",
+      "detection_signals": ["/blog", "/articles", "/topics", "Article schema", "author pages", "publication dates"],
+      "priority_categories": ["content_structure", "authority_eeat", "structured_data", "ai_search_readiness", "technical_performance"]
+    },
+    "corporate": {
+      "label": "Corporate / Company Website",
+      "detection_signals": ["/about", "/case-studies", "/portfolio", "/industries", "client logos", "team page"],
+      "priority_categories": ["authority_eeat", "structured_data", "content_structure", "technical_performance", "ai_search_readiness"]
+    },
+    "local_business": {
+      "label": "Local Business",
+      "detection_signals": ["phone number", "physical address", "service area", "serving [city]", "Google Maps embed", "opening hours"],
+      "priority_categories": ["local_seo", "structured_data", "authority_eeat", "conversion_trust", "content_structure"]
+    },
+    "portfolio": {
+      "label": "Portfolio / Landing Page",
+      "detection_signals": ["portfolio", "projects", "single page", "hero section", "CTA focused"],
+      "priority_categories": ["technical_performance", "content_structure", "conversion_trust"]
+    }
+  },
+
+  "industry_verticals": {
+    "_note": "Auto-detected for local_business type. Routes to industry-specific schema and checks. See references/local-schema-types.md",
+    "restaurant": { "signals": ["/menu", "reservations", "cuisine", "dine-in", "takeout"], "schema_subtype": "Restaurant" },
+    "healthcare": { "signals": ["insurance accepted", "patients", "appointments", "NPI", "HIPAA"], "schema_subtype": "MedicalClinic" },
+    "legal": { "signals": ["attorney", "lawyer", "practice areas", "bar admission", "case results"], "schema_subtype": "LegalService" },
+    "home_services": { "signals": ["service area", "emergency service", "free estimate", "licensed/insured", "24/7"], "schema_subtype": "HomeAndConstructionBusiness" },
+    "real_estate": { "signals": ["listings", "MLS", "properties", "agent bio", "brokerage", "open house"], "schema_subtype": "RealEstateAgent" },
+    "automotive": { "signals": ["inventory", "VIN", "test drive", "dealership", "service department"], "schema_subtype": "AutoDealer" }
+  },
+
+  "audit_levels": {
+    "quick": {
+      "label": "Quick Scan",
+      "description": "Fast check of critical issues. 2-5 minutes. Catches dealbreakers.",
+      "max_checks": 25,
+      "focus": "Only critical and high severity checks"
+    },
+    "standard": {
+      "label": "Standard Audit",
+      "description": "Full audit covering all major categories. 10-20 minutes. Production-ready report.",
+      "max_checks": 70,
+      "focus": "Critical, high, and medium severity checks"
+    },
+    "deep": {
+      "label": "Deep Audit",
+      "description": "Comprehensive audit with competitive analysis and advanced checks. 30-60 minutes. Agency-grade report.",
+      "max_checks": null,
+      "focus": "All checks including low severity, competitor comparison, content gap analysis"
+    }
+  },
+
+  "severity_levels": {
+    "critical": "Blocks indexing, causes ranking drops, or breaks core functionality",
+    "high": "Significant negative impact on rankings or user experience",
+    "medium": "Missed optimization opportunity with measurable impact",
+    "low": "Nice-to-have improvement, marginal impact",
+    "info": "Informational finding, no direct action needed"
+  },
+
+  "scoring": {
+    "weights": {
+      "technical_seo": 0.22,
+      "content_quality": 0.23,
+      "on_page_seo": 0.20,
+      "schema_structured_data": 0.10,
+      "performance_cwv": 0.10,
+      "ai_search_readiness": 0.10,
+      "images_media": 0.05
+    },
+    "grades": { "A+": "95-100", "A": "90-94", "B+": "85-89", "B": "75-84", "C": "60-74", "D": "40-59", "F": "0-39" },
+    "priority_levels": {
+      "critical": "Fix immediately. Direct ranking/indexing impact.",
+      "high": "Fix within 1 week. Significant SEO improvement.",
+      "medium": "Fix within 1 month. Incremental gains.",
+      "low": "Backlog. Nice to have."
+    }
+  },
+
+  "categories": {
+
+    "01_crawlability_indexing": {
+      "label": "Crawlability & Indexing",
+      "checks": [
+        { "id": "CI01", "name": "robots.txt", "what": "Exists, accessible, no critical Disallow rules, Sitemap directive present", "how": "web_read_text on /robots.txt", "severity": "critical", "level": "quick" },
+        { "id": "CI02", "name": "XML sitemap", "what": "Exists, valid XML, URLs present, lastmod recent", "how": "web_read_text on /sitemap.xml and /sitemap_index.xml", "severity": "critical", "level": "quick" },
+        { "id": "CI03", "name": "Meta robots / noindex", "what": "No accidental noindex on important pages", "how": "web_read_html on homepage and key pages. Check <meta name='robots'>", "severity": "critical", "level": "quick" },
+        { "id": "CI04", "name": "Canonical tags", "what": "Present, self-referencing, consistent protocol/domain, no HTTP/HTTPS mismatch", "how": "web_read_html on 3-5 key pages. Check <link rel='canonical'>", "severity": "high", "level": "standard" },
+        { "id": "CI05", "name": "Hreflang (multilingual)", "what": "Bidirectional references, x-default set, correct language codes", "how": "web_read_html on homepage for <link rel='alternate' hreflang>", "severity": "high", "level": "standard", "site_types": ["ecommerce", "corporate", "saas"] },
+        { "id": "CI06", "name": "HTTP status codes", "what": "Clean 200 responses, no redirect chains > 1 hop, no soft 404s", "how": "Navigate key pages, check for redirect chains", "severity": "high", "level": "standard" },
+        { "id": "CI07", "name": "JavaScript rendering dependency", "what": "Critical content in initial HTML, not only JS-injected", "how": "web_read_text vs web_read_html comparison. Check for empty <div id='app'>. Dec 2025 Google update: canonical/noindex in raw HTML may override JS changes.", "severity": "high", "level": "standard", "site_types": ["saas", "ecommerce", "blog"] },
+        { "id": "CI08", "name": "AI crawler management", "what": "Conscious policy for GPTBot, ClaudeBot, PerplexityBot, Google-Extended, Bytespider in robots.txt", "how": "web_read_text on /robots.txt. Check each AI crawler directive. Note: blocking Google-Extended does NOT affect Search/AI Overviews. Blocking GPTBot does NOT prevent ChatGPT citation via ChatGPT-User.", "severity": "medium", "level": "standard" },
+        { "id": "CI09", "name": "IndexNow protocol", "what": "Check if site supports IndexNow for Bing, Yandex, Naver (faster non-Google indexing)", "how": "Check for IndexNow key file or API integration signals", "severity": "low", "level": "deep" }
+      ]
+    },
+
+    "02_technical_performance": {
+      "label": "Technical Performance & Core Web Vitals",
+      "thresholds_note": "LCP <2.5s good, INP <200ms good (replaced FID March 2024), CLS <0.1 good. 75th percentile of real user data. Unchanged since original definitions. See references/cwv-thresholds.md",
+      "checks": [
+        { "id": "TP01", "name": "Page load assessment", "what": "< 50 requests, < 3MB total weight, critical resources within 2.5s", "how": "web_exec_js: count scripts, stylesheets, images. Performance API timing.", "severity": "high", "level": "quick" },
+        { "id": "TP02", "name": "LCP element identification", "what": "LCP element optimized: preloaded, modern format, explicit dimensions, no lazy-loading above fold", "how": "web_exec_js: PerformanceObserver for 'largest-contentful-paint'. Check LCP subparts: TTFB (<800ms) + Resource Load Delay + Resource Load Time + Element Render Delay.", "severity": "high", "level": "standard" },
+        { "id": "TP03", "name": "CLS sources", "what": "All media has explicit dimensions, fonts use display:swap, no unsized ad slots", "how": "web_read_html: check all <img>/<video> for width/height. Check font-display. Check for dynamically injected content above fold.", "severity": "high", "level": "standard" },
+        { "id": "TP04", "name": "INP readiness", "what": "No long tasks >50ms on interaction, minimal third-party JS, DOM <1500 elements", "how": "web_exec_js: Performance.getEntriesByType('longtask'), count event listeners, document.querySelectorAll('*').length for DOM size.", "severity": "high", "level": "standard" },
+        { "id": "TP05", "name": "Image optimization", "what": "Modern formats (WebP/AVIF), responsive srcset, lazy loading below fold, no oversized images", "how": "web_exec_js: collect all <img>, check src format, srcset, loading attribute, naturalWidth vs displayWidth.", "severity": "medium", "level": "standard" },
+        { "id": "TP06", "name": "Resource hints and preloading", "what": "Preconnect to critical origins, preload for LCP resource and primary font", "how": "web_read_html <head> for <link rel='preconnect'>, <link rel='preload'>, <link rel='dns-prefetch'>.", "severity": "medium", "level": "standard" },
+        { "id": "TP07", "name": "Render-blocking resources", "what": "Critical CSS inlined, non-critical deferred, scripts async/deferred", "how": "web_read_html <head>: count <link rel='stylesheet'> without media, <script> without async/defer.", "severity": "medium", "level": "standard" },
+        { "id": "TP08", "name": "Mobile responsiveness", "what": "Viewport meta, no horizontal scroll, touch targets min 48x48px", "how": "web_read_html for viewport meta. web_exec_js: scrollWidth > clientWidth check. Mobile-first indexing 100% complete since July 2024.", "severity": "critical", "level": "quick" },
+        { "id": "TP09", "name": "HTTPS and security headers", "what": "Full HTTPS, no mixed content, HSTS, CSP, X-Content-Type-Options, X-Frame-Options", "how": "Check protocol, web_exec_js for mixed content warnings.", "severity": "critical", "level": "quick" },
+        { "id": "TP10", "name": "HTTP/2+ and compression", "what": "HTTP/2 or HTTP/3, Brotli or gzip", "how": "web_exec_js: performance.getEntriesByType('navigation')[0].nextHopProtocol.", "severity": "medium", "level": "deep" }
+      ]
+    },
+
+    "03_content_structure": {
+      "label": "Content Structure & On-Page SEO",
+      "quality_gates_note": "See references/quality-gates.md for word count minimums by page type. Word count is NOT a direct ranking factor (John Mueller confirmed) but indicates topical coverage depth.",
+      "checks": [
+        { "id": "CS01", "name": "Title tag", "what": "50-60 chars, primary keyword near start, brand at end, unique per page", "how": "web_read_html <head> extract <title>.", "severity": "critical", "level": "quick" },
+        { "id": "CS02", "name": "Meta description", "what": "120-160 chars, includes keyword naturally, has CTA, unique per page", "how": "web_read_html <head> extract <meta name='description'>.", "severity": "high", "level": "quick" },
+        { "id": "CS03", "name": "Heading hierarchy", "what": "Single H1 with primary keyword, logical H2-H6, no skipped levels", "how": "web_seo_audit returns heading structure.", "severity": "high", "level": "quick" },
+        { "id": "CS04", "name": "Content quality and depth", "what": "Adequate length for page type, unique content, addresses user intent", "how": "web_read_text on key pages. Check word count vs quality-gates minimums (Homepage 500, Blog 1500, Product 400, Service 800).", "severity": "high", "level": "standard" },
+        { "id": "CS05", "name": "Internal linking", "what": "Descriptive anchor text, breadcrumbs, key pages within 3 clicks, 2-5 contextual links per 1000 words", "how": "web_exec_js: collect all internal <a> links, check anchor text quality.", "severity": "medium", "level": "standard" },
+        { "id": "CS06", "name": "Image alt text", "what": "All content images have descriptive alt (10-125 chars), decorative images have alt=''", "how": "web_seo_audit returns alt text analysis.", "severity": "medium", "level": "standard" },
+        { "id": "CS07", "name": "URL structure", "what": "Clean slugs with keywords, no excessive parameters, consistent pattern, <100 chars", "how": "Analyze current page URL and linked URLs.", "severity": "medium", "level": "standard" },
+        { "id": "CS08", "name": "Content freshness", "what": "Dates visible on articles, dateModified in schema, copyright year current", "how": "web_read_html + web_read_text for datePublished/dateModified signals.", "severity": "medium", "level": "standard", "site_types": ["blog", "corporate", "saas"] },
+        { "id": "CS09", "name": "Duplicate content", "what": "Unique titles/descriptions per page, no filter URL duplication", "how": "Navigate 5-10 key pages, compare titles and meta descriptions.", "severity": "high", "level": "deep", "site_types": ["ecommerce", "blog"] },
+        { "id": "CS10", "name": "FAQ / Q&A content", "what": "FAQ sections present on key pages, questions match real user queries", "how": "web_read_text for FAQ sections. Note: FAQPage schema rich results only for gov/health sites since Aug 2023, but still benefits AI citation.", "severity": "medium", "level": "standard" },
+        { "id": "CS11", "name": "Semantic HTML", "what": "Uses <header>, <nav>, <main>, <article>, <footer>, not all divs", "how": "web_read_html verify semantic elements.", "severity": "medium", "level": "standard" }
+      ]
+    },
+
+    "04_structured_data": {
+      "label": "Structured Data (JSON-LD / Schema.org)",
+      "reference_note": "See references/schema-types.md for full deprecation status. NEVER recommend HowTo (deprecated Sept 2023). FAQPage restricted to gov/health (Aug 2023). SpecialAnnouncement deprecated July 2025. See schema/templates.json for ready-to-use JSON-LD. Content with proper schema has ~2.5x higher chance of AI citation.",
+      "checks": [
+        { "id": "SD01", "name": "JSON-LD presence and validity", "what": "At least one valid JSON-LD block, no syntax errors", "how": "web_seo_audit + web_exec_js: JSON.parse all <script type='application/ld+json'> blocks.", "severity": "critical", "level": "quick" },
+        { "id": "SD02", "name": "Organization / LocalBusiness", "what": "Name, url, logo, contactPoint, sameAs, description. LocalBusiness: +address, telephone, openingHours, geo (5+ decimal places), priceRange", "how": "web_seo_audit on homepage. Use most specific subtype (OnlineStore not OnlineBusiness, Restaurant not LocalBusiness).", "severity": "high", "level": "standard" },
+        { "id": "SD03", "name": "Product schema (e-commerce)", "what": "name, image, description, sku/gtin, brand, offers (price, currency, availability). Price must match visible price. AggregateRating must match visible reviews.", "how": "web_seo_audit on 2-3 product pages. Check variant handling with ProductGroup.", "severity": "critical", "level": "quick", "site_types": ["ecommerce"] },
+        { "id": "SD04", "name": "Article / BlogPosting", "what": "headline, datePublished, dateModified, author (Person with name+url, not just string), publisher, image", "how": "web_seo_audit on 2-3 articles. Author as Person with sameAs links is critical for E-E-A-T.", "severity": "high", "level": "standard", "site_types": ["blog", "corporate"] },
+        { "id": "SD05", "name": "BreadcrumbList", "what": "Matches visible breadcrumbs, correct hierarchy, valid URLs", "how": "web_seo_audit on category/product/article pages.", "severity": "medium", "level": "standard" },
+        { "id": "SD06", "name": "FAQPage (if present)", "what": "Matches visible FAQ exactly. Info priority on commercial sites (benefits AI citation, not Google rich results since Aug 2023).", "how": "web_seo_audit. Verify Q&A visible on page (not schema-only spam).", "severity": "medium", "level": "standard" },
+        { "id": "SD07", "name": "WebSite + SearchAction", "what": "WebSite schema with sitelinks searchbox potential", "how": "web_seo_audit on homepage.", "severity": "medium", "level": "standard", "site_types": ["ecommerce", "saas", "blog"] },
+        { "id": "SD08", "name": "Service schema", "what": "serviceType, provider linked to Organization, areaServed", "how": "web_seo_audit on service pages.", "severity": "high", "level": "standard", "site_types": ["corporate", "local_business", "saas"] },
+        { "id": "SD09", "name": "Review / AggregateRating", "what": "ratingValue, reviewCount, bestRating match visible review data. Reviews MUST be visible on page.", "how": "web_seo_audit. Cross-check visible reviews vs schema values.", "severity": "high", "level": "standard", "site_types": ["ecommerce", "local_business"] },
+        { "id": "SD10", "name": "Person schema (authors)", "what": "Person with name, jobTitle, url, sameAs (LinkedIn, Wikipedia), image, worksFor", "how": "web_seo_audit on author/team pages. Critical for E-E-A-T after Dec 2025 update.", "severity": "high", "level": "standard", "site_types": ["blog", "corporate"] },
+        { "id": "SD11", "name": "@graph and @id consistency", "what": "@graph pattern used, @id URIs stable, entities cross-referenced, no duplicate graphs from plugins", "how": "web_exec_js: parse all JSON-LD blocks, check @id consistency.", "severity": "low", "level": "deep" },
+        { "id": "SD12", "name": "Shipping/Return schema (e-commerce)", "what": "shippingDetails and hasMerchantReturnPolicy in Offer. returnPolicyCountry required since March 2025.", "how": "web_seo_audit on product pages.", "severity": "medium", "level": "deep", "site_types": ["ecommerce"] },
+        { "id": "SD13", "name": "Deprecated schema detection", "what": "Flag: HowTo (removed Sept 2023), SpecialAnnouncement (July 2025), ClaimReview (June 2025), VehicleListing (June 2025), Dataset (late 2025)", "how": "web_exec_js: scan all JSON-LD @type values against deprecated list.", "severity": "high", "level": "standard" },
+        { "id": "SD14", "name": "VideoObject schema", "what": "If video content present: name, description, thumbnailUrl, uploadDate, duration, contentUrl. Clip markup for key moments.", "how": "web_seo_audit. Check for video elements without corresponding schema.", "severity": "medium", "level": "standard" }
+      ]
+    },
+
+    "05_authority_eeat": {
+      "label": "Authority & E-E-A-T Signals",
+      "reference_note": "See references/eeat-framework.md. Dec 2025 core update: E-E-A-T now applies to ALL competitive queries, not just YMYL. Anonymous/generic authorship penalized even for non-YMYL. Experience signals are key differentiator (AI cannot fabricate genuine experience).",
+      "checks": [
+        { "id": "AE01", "name": "About page", "what": "Company info, team members with photos/bios, founding story, verifiable address, registration info", "how": "Navigate to /about. web_read_text.", "severity": "high", "level": "standard" },
+        { "id": "AE02", "name": "Author pages and bios", "what": "Authors attributed with link to bio page, credentials, expertise, social links, Person schema", "how": "web_read_text on blog/article pages for author attribution + author page.", "severity": "high", "level": "standard", "site_types": ["blog", "corporate", "saas"] },
+        { "id": "AE03", "name": "Contact information", "what": "Phone, email, physical address, contact form, social links visible on every page (footer)", "how": "web_read_text on homepage and /contact.", "severity": "high", "level": "quick" },
+        { "id": "AE04", "name": "Trust signals", "what": "Customer reviews/testimonials, partner logos, certifications/awards, case studies, media mentions", "how": "web_read_text on homepage and landing pages.", "severity": "high", "level": "standard" },
+        { "id": "AE05", "name": "Legal pages", "what": "Privacy policy, terms of service, cookie policy - present, accessible from every page, substantive content", "how": "Check footer links. web_read_text to verify not empty.", "severity": "high", "level": "standard" },
+        { "id": "AE06", "name": "Social media linkage", "what": "Social links in footer + sameAs in Organization schema. Profiles active and consistent.", "how": "web_read_html footer for social links. Cross-reference with schema sameAs.", "severity": "medium", "level": "standard" },
+        { "id": "AE07", "name": "Content originality", "what": "Original research, unique data, real examples, first-hand experience signals. Not generic AI-generated.", "how": "web_read_text on 3-5 content pages. Look for: original photos, specific data, personal process docs, case studies.", "severity": "high", "level": "deep" },
+        { "id": "AE08", "name": "YMYL compliance", "what": "Health/finance/legal content: qualified author credentials, disclaimers, source citations", "how": "Identify YMYL topics. Check for professional credentials and disclaimers.", "severity": "critical", "level": "standard" },
+        { "id": "AE09", "name": "NAP consistency (local)", "what": "Name, Address, Phone identical everywhere: footer, contact page, schema, GBP", "how": "web_read_text on homepage, contact, about, footer. Compare all NAP instances.", "severity": "high", "level": "standard", "site_types": ["local_business", "corporate"] },
+        { "id": "AE10", "name": "Topical authority", "what": "Clear topic clusters with pillar pages, deep coverage, strong interlinking", "how": "web_read_text on sitemap and navigation. Analyze content cluster coverage.", "severity": "medium", "level": "deep" }
+      ]
+    },
+
+    "06_ai_search_readiness": {
+      "label": "AI Search & GEO (Generative Engine Optimization)",
+      "reference_note": "Brand mentions correlate 3x more strongly with AI visibility than backlinks (Ahrefs Dec 2025, 75k brands). YouTube mentions strongest signal (~0.737 correlation). Only 11% of domains cited by both ChatGPT and Google AI Overviews for same query. AI crawlers do NOT execute JavaScript - SSR is critical.",
+      "checks": [
+        { "id": "AI01", "name": "Entity clarity", "what": "Clear definition of business/product in first paragraph + schema + sameAs links to authoritative profiles", "how": "web_seo_audit + web_read_text on homepage/about.", "severity": "high", "level": "standard" },
+        { "id": "AI02", "name": "Citability scoring", "what": "Clear, extractable answer blocks of 134-167 words. Direct answer in first 40-60 words of section. Definitions: 'X is...' patterns.", "how": "web_read_text on key content pages. Identify self-contained answer blocks.", "severity": "medium", "level": "standard", "site_types": ["blog", "corporate", "saas"] },
+        { "id": "AI03", "name": "AI crawler access", "what": "Conscious policy for GPTBot, OAI-SearchBot, ChatGPT-User, ClaudeBot, PerplexityBot, anthropic-ai, Bytespider, cohere-ai, CCBot", "how": "web_read_text on /robots.txt. Recommendation: allow GPTBot, OAI-SearchBot, ClaudeBot, PerplexityBot for AI search visibility.", "severity": "medium", "level": "standard" },
+        { "id": "AI04", "name": "llms.txt file", "what": "Emerging standard: /llms.txt with structured site description, key pages, facts for AI crawlers", "how": "web_read_text on /llms.txt. Check for: title, description, section links, key facts.", "severity": "medium", "level": "standard" },
+        { "id": "AI05", "name": "Server-side rendering for AI", "what": "Key content available without JS execution (AI crawlers don't execute JS)", "how": "web_read_html raw source vs web_read_text rendered. Check if content exists in initial HTML.", "severity": "high", "level": "standard", "site_types": ["saas", "ecommerce"] },
+        { "id": "AI06", "name": "Structural readability for AI", "what": "Question-based headings, short paragraphs (2-4 sentences), tables for comparisons, lists for steps. 92% of AI Overview citations come from top-10 pages.", "how": "web_read_text + web_read_html on content pages. Assess heading format, paragraph length, table/list usage.", "severity": "medium", "level": "standard" },
+        { "id": "AI07", "name": "Multi-modal content", "what": "Text + images + video + infographics. 156% higher AI citation selection rate with multi-modal content.", "how": "web_exec_js: count images, videos, iframes, interactive elements on key pages.", "severity": "medium", "level": "deep" },
+        { "id": "AI08", "name": "Brand mention presence", "what": "Check presence on platforms AI systems source from: Wikipedia, Reddit, YouTube, LinkedIn, Yelp, TripAdvisor", "how": "Agent notes platforms to check. For deep audit: web_open competitor platform pages.", "severity": "medium", "level": "deep" },
+        { "id": "AI09", "name": "Speakable markup", "what": "Speakable schema with cssSelector pointing to key content blocks (voice search)", "how": "web_exec_js: check JSON-LD for Speakable type.", "severity": "low", "level": "deep" },
+        { "id": "AI10", "name": "RSL 1.0 licensing", "what": "Really Simple Licensing (Dec 2025) - machine-readable AI licensing terms. Backed by Reddit, Yahoo, Medium, Quora, Cloudflare.", "how": "Check for RSL implementation.", "severity": "low", "level": "deep" }
+      ]
+    },
+
+    "07_local_seo": {
+      "label": "Local SEO",
+      "reference_note": "See references/local-seo-signals.md and references/local-schema-types.md. GBP signals: 32% of local pack weight. Proximity: 55.2% of ranking variance. Review signals: ~20%. ChatGPT local conversion: 15.9% vs Google organic 1.76%. 18-day rule: rankings cliff if no new reviews for 3 weeks.",
+      "site_types": ["local_business"],
+      "checks": [
+        { "id": "LS01", "name": "Business type detection", "what": "Classify as brick-and-mortar, SAB (service area business), or hybrid. Determines which checks apply.", "how": "web_read_text: look for physical address, Google Maps embed, 'service area', 'we come to you'.", "severity": "info", "level": "quick" },
+        { "id": "LS02", "name": "GBP integration signals", "what": "GBP embed/widget, Maps iframe, reviews widget, consistent NAP with GBP", "how": "web_read_html for Maps iframe, GBP place ID, reviews widget.", "severity": "critical", "level": "quick" },
+        { "id": "LS03", "name": "LocalBusiness schema subtype", "what": "Correct industry-specific subtype (Restaurant, MedicalClinic, LegalService, etc.), not generic LocalBusiness", "how": "web_seo_audit. Check @type against industry_verticals detection. Load references/local-schema-types.md for per-vertical schema patterns.", "severity": "high", "level": "standard" },
+        { "id": "LS04", "name": "NAP on-page consistency", "what": "Name, Address, Phone identical in: visible HTML footer, contact page header, LocalBusiness JSON-LD schema", "how": "web_read_text on footer + contact page. Compare with schema values.", "severity": "high", "level": "standard" },
+        { "id": "LS05", "name": "Review signals", "what": "10+ Google reviews (threshold), 4.5+ stars, reviews in last 3 months, owner responses present. AggregateRating in schema matches.", "how": "web_read_text for review count/rating. web_seo_audit for AggregateRating schema.", "severity": "high", "level": "standard" },
+        { "id": "LS06", "name": "Local on-page SEO", "what": "City+service in title and H1, dedicated service pages (one per core service), click-to-call (tel: link), embedded map", "how": "web_read_html: check title, H1 for local keywords. Check for tel: links. Check for Maps iframe.", "severity": "high", "level": "standard" },
+        { "id": "LS07", "name": "Location page quality (multi-location)", "what": ">60% unique content. Swap test: if swapping city name still makes sense, it's a doorway page. Unique photos, local testimonials, local FAQs.", "how": "web_read_text on 2-3 location pages. Compare content overlap.", "severity": "high", "level": "standard" },
+        { "id": "LS08", "name": "Citation presence", "what": "Tier 1: Google, Yelp, BBB, Facebook. Recommend: Apple Business Connect (27% usage, doubled), Bing Places (powers ChatGPT/Copilot/Alexa)", "how": "Agent flags citation platforms to check/claim.", "severity": "medium", "level": "standard" },
+        { "id": "LS09", "name": "Local content signals", "what": "City/region mentions, local landmarks, service area descriptions, local case studies", "how": "web_read_text on key pages for location-specific content.", "severity": "medium", "level": "standard" },
+        { "id": "LS10", "name": "Local authority signals", "what": "Chamber of Commerce, BBB accreditation, local news/press mentions, community involvement, 'best of' list presence (top AI visibility factor)", "how": "web_read_text for badges, affiliations, press mentions.", "severity": "medium", "level": "deep" }
+      ]
+    },
+
+    "08_conversion_trust": {
+      "label": "Conversion & User Trust",
+      "checks": [
+        { "id": "CT01", "name": "CTA clarity", "what": "Clear primary CTA above fold, action-oriented text, visually distinct", "how": "web_read_text + web_exec_js on key landing pages.", "severity": "high", "level": "standard" },
+        { "id": "CT02", "name": "No intrusive interstitials", "what": "No full-screen popups on entry, cookie banner doesn't block content, popups properly timed", "how": "web_read_html observe page load. Check for immediate overlays.", "severity": "high", "level": "standard" },
+        { "id": "CT03", "name": "404 page experience", "what": "Custom 404 with search, navigation, links to key pages. Not default server error.", "how": "web_open a non-existent URL. web_read_text.", "severity": "medium", "level": "standard" },
+        { "id": "CT04", "name": "Form usability", "what": "Minimal fields, clear labels, inline validation, privacy notice near submit", "how": "web_read_html on pages with forms.", "severity": "medium", "level": "standard", "site_types": ["corporate", "saas", "local_business"] },
+        { "id": "CT05", "name": "Price transparency", "what": "Price visible, shipping/tax info accessible before checkout, no hidden costs", "how": "web_read_text on product/pricing pages.", "severity": "high", "level": "standard", "site_types": ["ecommerce", "saas"] }
+      ]
+    },
+
+    "09_open_graph_social": {
+      "label": "Open Graph & Social Sharing",
+      "checks": [
+        { "id": "OG01", "name": "Open Graph tags", "what": "og:title, og:description, og:image (1200x630 min), og:url (matches canonical), og:type", "how": "web_seo_audit returns OG data.", "severity": "medium", "level": "standard" },
+        { "id": "OG02", "name": "Twitter/X Card tags", "what": "twitter:card (summary_large_image), twitter:site, twitter:creator, twitter:image", "how": "web_read_html <head>.", "severity": "low", "level": "standard" },
+        { "id": "OG03", "name": "Favicon and web manifest", "what": "Custom favicon, apple-touch-icon, web manifest with theme color", "how": "web_read_html <head> for rel='icon', rel='apple-touch-icon', rel='manifest'.", "severity": "low", "level": "standard" }
+      ]
+    },
+
+    "10_programmatic_seo": {
+      "label": "Programmatic SEO (Scale Pages)",
+      "site_types": ["ecommerce", "saas"],
+      "quality_gates_note": "WARNING at 100+ generated pages. HARD STOP at 500+ without audit. Each page must pass swap test. See references/quality-gates.md for safe vs risky page types.",
+      "checks": [
+        { "id": "PS01", "name": "Template uniqueness", "what": "Each generated page reads as standalone valuable resource. No mad-libs patterns (just swapping city/product in identical text).", "how": "web_read_text on 3-5 generated pages. Compare content overlap percentage.", "severity": "high", "level": "deep" },
+        { "id": "PS02", "name": "Doorway page detection", "what": "Swap test: can you swap the variable (city, product) and content still makes sense? If yes, it's a doorway page.", "how": "web_read_text on multiple generated pages. Compare structure and unique content ratio.", "severity": "critical", "level": "deep" },
+        { "id": "PS03", "name": "Index bloat prevention", "what": "Unnecessary pages noindexed or canonicalized. Filter URLs not creating duplicate content.", "how": "Check for noindex on thin generated pages, canonical on parameter URLs.", "severity": "high", "level": "deep" }
+      ]
+    },
+
+    "11_competitive_analysis": {
+      "label": "Competitive Analysis (Deep Audit Only)",
+      "checks": [
+        { "id": "CA01", "name": "Competitor structured data comparison", "what": "Compare schema types and property coverage with top 2-3 competitors", "how": "web_open + web_seo_audit on competitor URLs.", "severity": "info", "level": "deep" },
+        { "id": "CA02", "name": "Competitor content gap analysis", "what": "Identify topic clusters and content types present on competitors but missing", "how": "web_read_text on competitor navigation/sitemap.", "severity": "info", "level": "deep" },
+        { "id": "CA03", "name": "Competitor performance benchmark", "what": "Compare resource counts, image optimization, JS payload with competitors", "how": "Run TP01-TP05 checks on competitor pages.", "severity": "info", "level": "deep" }
+      ]
+    }
+  },
+
+  "tool_mapping": {
+    "description": "Wove terminal tools available for audit execution. Key advantage over CLI-based SEO tools: real browser context with JavaScript execution.",
+    "web_read_text": "Clean text extraction by CSS selector. Content analysis, word count, text quality.",
+    "web_read_html": "Raw HTML extraction. Meta tags, structured data in HTML, semantic elements, head section.",
+    "web_seo_audit": "Full SEO audit: JSON-LD, Open Graph, meta tags, headings, alt text, links. Primary tool for structured data.",
+    "web_exec_js": "Execute JavaScript in page context. Performance API, DOM measurements, computed styles, dynamic content. THIS IS THE KEY DIFFERENTIATOR - real browser metrics, not curl.",
+    "web_click": "Click elements by CSS selector. Test navigation, expand accordions, pagination, interactive elements.",
+    "web_type_input": "Type into inputs. Test search functionality, forms, login flows.",
+    "web_press_key": "Simulate key presses. Keyboard navigation, form submission, accessibility testing.",
+    "web_open": "Open new browser widget with URL. Navigate to pages, competitor analysis, multi-page audit.",
+    "term_run_command": "Run terminal commands. Curl checks, DNS lookups, SSL verification, Claude Code integration."
+  },
+
+  "reference_files": {
+    "_note": "Load on-demand as needed, do NOT load all at startup",
+    "cwv_thresholds": "references/cwv-thresholds.md - Current Core Web Vitals thresholds, LCP subparts, measurement tools",
+    "eeat_framework": "references/eeat-framework.md - E-E-A-T evaluation criteria, Sept 2025 QRG + Dec 2025 core update",
+    "schema_types": "references/schema-types.md - All supported schema types with deprecation status (Feb 2026)",
+    "quality_gates": "references/quality-gates.md - Content length minimums, uniqueness thresholds, doorway detection",
+    "local_seo_signals": "references/local-seo-signals.md - Local ranking factors, review benchmarks, citation tiers, GBP",
+    "local_schema_types": "references/local-schema-types.md - LocalBusiness subtypes by industry, citation sources per vertical",
+    "schema_templates": "schema/templates.json - Ready-to-use JSON-LD snippets for VideoObject, BroadcastEvent, Clip, etc."
+  },
+
+  "execution_instructions": {
+    "step_1": "Ask user for: target URL, site type (or auto-detect from signals), audit level (quick/standard/deep)",
+    "step_2": "Open the target URL with web_open",
+    "step_3": "Run web_seo_audit on homepage for baseline data (JSON-LD, OG, meta, headings, links)",
+    "step_4": "Auto-detect site_type and industry_vertical from page signals",
+    "step_5": "Based on site_type, industry_vertical, and audit_level, select applicable checks",
+    "step_6": "Load relevant reference files on-demand as needed",
+    "step_7": "Execute checks in category order using appropriate Wove tools",
+    "step_8": "For each check: record status (pass/partial/fail), evidence, specific fix with code example where applicable",
+    "step_9": "Calculate weighted scores per category and overall (use scoring.weights)",
+    "step_10": "Generate report: executive summary, score overview, critical issues first, category results, prioritized action plan",
+    "step_11": "For deep audits: run key checks on 2-3 competitor URLs for comparison"
+  }
+}

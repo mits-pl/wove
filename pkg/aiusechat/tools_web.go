@@ -208,7 +208,7 @@ var webSelectorSchema = map[string]any{
 		},
 		"selector": map[string]any{
 			"type":        "string",
-			"description": "CSS selector to target elements (e.g. 'body', 'main', 'article', '.content', '#main-text'). Defaults to 'body'.",
+			"description": "Standard CSS selector (document.querySelectorAll compatible). Use tag names, classes, IDs, attributes, and combinators only. Examples: 'h2', '.content', '#main', 'div.card > p', '[data-id=\"123\"]', 'section h2'. NEVER use jQuery pseudo-selectors like :contains(), :has(), :visible, :first, :last, :eq() — they are NOT valid CSS and will throw errors. To find elements by text content, select the parent element or use web_exec_js with JavaScript instead. Defaults to 'body'.",
 		},
 	},
 	"required": []string{"widget_id"},
@@ -901,6 +901,189 @@ func GetWebPressKeyToolDefinition(tabId string) uctypes.ToolDefinition {
 				}
 				return 'pressed ' + key + ' on ' + target.tagName + (target.id ? '#'+target.id : '');
 			`, targetExpr, key)
+			return webExecJsOnWidget(tabId, widgetId, js)
+		},
+	}
+}
+
+const getConsoleLogsJS = `
+(function() {
+	if (!window.__woveConsoleLogs) return JSON.stringify([]);
+	var logs = window.__woveConsoleLogs;
+	var startIdx = arguments[0] || 0;
+	var filtered = logs.slice(startIdx);
+	return JSON.stringify({
+		total: logs.length,
+		returned: filtered.length,
+		startIndex: startIdx,
+		entries: filtered.slice(-200)
+	}, null, 2);
+})()
+`
+
+func GetWebGetConsoleToolDefinition(tabId string) uctypes.ToolDefinition {
+	return uctypes.ToolDefinition{
+		Name:             "web_get_console",
+		DisplayName:      "Get Browser Console",
+		Description:      "Read browser console output (console.log, console.warn, console.error) from the web widget. Returns recent console entries with level, message, and timestamp. Useful for debugging errors, checking API responses, and understanding application state.",
+		ShortDescription: "Read browser console logs",
+		ToolLogName:      "web:getconsole",
+		Strict:           true,
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"widget_id": map[string]any{
+					"type":        "string",
+					"description": "8-character widget ID of the web browser widget",
+				},
+				"level": map[string]any{
+					"type":        "string",
+					"description": "Filter by log level: 'error', 'warn', 'log', 'info', 'debug', or 'all' (default: 'all')",
+				},
+			},
+			"required":             []string{"widget_id", "level"},
+			"additionalProperties": false,
+		},
+		ToolCallDesc: func(input any, output any, _ *uctypes.UIMessageDataToolUse) string {
+			inputMap, _ := input.(map[string]any)
+			widgetId, _ := inputMap["widget_id"].(string)
+			level, _ := inputMap["level"].(string)
+			if level == "" || level == "all" {
+				return fmt.Sprintf("reading console logs from web widget %s", widgetId)
+			}
+			return fmt.Sprintf("reading console %s from web widget %s", level, widgetId)
+		},
+		ToolTextCallback: func(input any) (string, error) {
+			inputMap, ok := input.(map[string]any)
+			if !ok {
+				return "", fmt.Errorf("invalid input format")
+			}
+			widgetId, _ := inputMap["widget_id"].(string)
+			if widgetId == "" {
+				return "", fmt.Errorf("widget_id is required")
+			}
+			level, _ := inputMap["level"].(string)
+			if level == "" {
+				level = "all"
+			}
+
+			js := fmt.Sprintf(`
+				var allLogs = %s;
+				var parsed = JSON.parse(allLogs);
+				var level = %q;
+				if (level !== 'all' && parsed.entries) {
+					parsed.entries = parsed.entries.filter(function(e) { return e.level === level; });
+					parsed.returned = parsed.entries.length;
+				}
+				return JSON.stringify(parsed, null, 2);
+			`, getConsoleLogsJS, level)
+			return webExecJsOnWidget(tabId, widgetId, js)
+		},
+	}
+}
+
+const inspectVueJS = `
+(function() {
+	var result = { url: window.location.href, title: document.title };
+
+	// Inertia page
+	try {
+		var pageEl = document.querySelector('[data-page]');
+		if (pageEl) {
+			var data = JSON.parse(pageEl.dataset.page);
+			result.inertia = { component: data.component || null, version: data.version || null, url: data.url || null };
+			if (data.props) {
+				var propKeys = Object.keys(data.props);
+				result.inertia.propKeys = propKeys;
+				result.inertia.propCount = propKeys.length;
+			}
+		}
+	} catch(e) {}
+
+	// Target element Vue chain
+	var sel = (typeof selector !== 'undefined') ? selector : 'body';
+	var el = document.querySelector(sel);
+	if (!el) {
+		result.error = 'no element found for selector: ' + selector;
+		return JSON.stringify(result, null, 2);
+	}
+
+	var chain = [];
+	var node = el;
+	while (node) {
+		var instance = node.__vueParentComponent;
+		if (instance) {
+			var type = instance.type;
+			var file = type.__file || type.__name || instance.type.name || null;
+			if (file && !chain.find(function(c) { return c.file === file; })) {
+				chain.push({ name: type.__name || type.name || file.split('/').pop().replace('.vue',''), file: file });
+			}
+		}
+		node = node.parentElement;
+	}
+	result.vueComponents = chain;
+
+	// Vue app detection
+	var appRoot = document.querySelector('#app');
+	if (appRoot && appRoot.__vue_app__) {
+		result.vueVersion = appRoot.__vue_app__.version || 'detected';
+	} else if (window.__VUE__) {
+		result.vueVersion = 'detected (devtools)';
+	}
+
+	return JSON.stringify(result, null, 2);
+})()
+`
+
+func GetWebInspectVueToolDefinition(tabId string) uctypes.ToolDefinition {
+	return uctypes.ToolDefinition{
+		Name:             "web_inspect_vue",
+		DisplayName:      "Inspect Vue/Inertia Page",
+		Description:      "Inspect the current web page for Vue.js component hierarchy and Inertia.js page data. Returns the Vue component chain for a given CSS selector (default: body), Inertia page component name, props keys, and Vue version. Useful for understanding frontend structure of Laravel/Inertia/Vue applications.",
+		ShortDescription: "Inspect Vue/Inertia in web widget",
+		ToolLogName:      "web:inspectvue",
+		Strict:           true,
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"widget_id": map[string]any{
+					"type":        "string",
+					"description": "8-character widget ID of the web browser widget",
+				},
+				"selector": map[string]any{
+					"type":        "string",
+					"description": "CSS selector of the element to inspect for Vue components. Defaults to 'body'.",
+				},
+			},
+			"required":             []string{"widget_id", "selector"},
+			"additionalProperties": false,
+		},
+		ToolCallDesc: func(input any, output any, _ *uctypes.UIMessageDataToolUse) string {
+			inputMap, _ := input.(map[string]any)
+			widgetId, _ := inputMap["widget_id"].(string)
+			selector, _ := inputMap["selector"].(string)
+			if selector == "" {
+				selector = "body"
+			}
+			return fmt.Sprintf("inspecting Vue/Inertia at %q in web widget %s", selector, widgetId)
+		},
+		ToolTextCallback: func(input any) (string, error) {
+			inputMap, ok := input.(map[string]any)
+			if !ok {
+				return "", fmt.Errorf("invalid input format")
+			}
+			widgetId, _ := inputMap["widget_id"].(string)
+			if widgetId == "" {
+				return "", fmt.Errorf("widget_id is required")
+			}
+			selector, _ := inputMap["selector"].(string)
+			if selector == "" {
+				selector = "body"
+			}
+			js := fmt.Sprintf(`
+				var selector = %q;
+				return %s
+			`, selector, inspectVueJS)
 			return webExecJsOnWidget(tabId, widgetId, js)
 		},
 	}

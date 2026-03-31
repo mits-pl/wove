@@ -25,6 +25,12 @@ import { Fragment, createRef, memo, useCallback, useEffect, useRef, useState } f
 import "./webview.scss";
 import type { WebViewEnv } from "./webviewenv";
 
+type ConsoleLogEntry = {
+    level: string; // "log" | "warn" | "error" | "info" | "debug"
+    message: string;
+    timestamp: number;
+};
+
 // User agent strings for mobile emulation
 const USER_AGENT_IPHONE =
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
@@ -32,6 +38,266 @@ const USER_AGENT_ANDROID =
     "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.43 Mobile Safari/537.36";
 
 let webviewPreloadUrl = null;
+
+const INSPECTOR_JS = `
+(function() {
+    if (window.__woveInspectorActive) return;
+    window.__woveInspectorActive = true;
+
+    const style = document.createElement('style');
+    style.id = '__wove_inspector_style';
+    style.textContent = \`
+        .__wove_inspector_highlight {
+            outline: 2px solid rgba(99, 102, 241, 0.8) !important;
+            outline-offset: 2px !important;
+        }
+        #__wove_inspector_tooltip {
+            position: fixed;
+            z-index: 2147483647;
+            background: rgba(15, 15, 25, 0.95);
+            color: #e2e8f0;
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            font-size: 11px;
+            line-height: 1.5;
+            padding: 8px 12px;
+            border-radius: 6px;
+            border: 1px solid rgba(99, 102, 241, 0.4);
+            max-width: 500px;
+            pointer-events: none;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+            backdrop-filter: blur(8px);
+        }
+        #__wove_inspector_tooltip.locked {
+            pointer-events: auto;
+            border-color: rgba(99, 102, 241, 0.8);
+        }
+        #__wove_inspector_tooltip .file {
+            color: #a5b4fc;
+            font-weight: 600;
+        }
+        #__wove_inspector_tooltip .chain {
+            color: #94a3b8;
+            margin-top: 2px;
+        }
+        #__wove_inspector_tooltip .label {
+            color: #64748b;
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        #__wove_inspector_tooltip .inertia {
+            color: #f472b6;
+            margin-top: 4px;
+        }
+        #__wove_inspector_tooltip .no-vue {
+            color: #64748b;
+            font-style: italic;
+        }
+        #__wove_inspector_tooltip .copy-btn {
+            display: none;
+            margin-top: 6px;
+            padding: 3px 10px;
+            background: rgba(99, 102, 241, 0.25);
+            color: #a5b4fc;
+            border: 1px solid rgba(99, 102, 241, 0.4);
+            border-radius: 4px;
+            font-family: inherit;
+            font-size: 10px;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        #__wove_inspector_tooltip .copy-btn:hover {
+            background: rgba(99, 102, 241, 0.4);
+        }
+        #__wove_inspector_tooltip.locked .copy-btn {
+            display: inline-block;
+        }
+    \`;
+    document.head.appendChild(style);
+
+    const tooltip = document.createElement('div');
+    tooltip.id = '__wove_inspector_tooltip';
+    tooltip.style.display = 'none';
+    document.body.appendChild(tooltip);
+
+    let highlighted = null;
+    let locked = false;
+
+    function getVueComponentChain(el) {
+        const chain = [];
+        let node = el;
+        while (node) {
+            const instance = node.__vueParentComponent;
+            if (instance) {
+                const type = instance.type;
+                const file = type.__file || type.__name || instance.type.name || null;
+                if (file && !chain.find(c => c.file === file)) {
+                    chain.push({ name: type.__name || type.name || file.split('/').pop().replace('.vue',''), file: file });
+                }
+            }
+            node = node.parentElement;
+        }
+        return chain;
+    }
+
+    function getInertiaPage() {
+        try {
+            const pageEl = document.querySelector('[data-page]');
+            if (pageEl) {
+                const data = JSON.parse(pageEl.dataset.page);
+                return data.component || null;
+            }
+        } catch(e) {}
+        return null;
+    }
+
+    let lastInspectData = '';
+
+    function updateTooltip(e, chain, inertiaPage) {
+        let html = '';
+        let copyLines = [];
+        if (chain.length > 0) {
+            html += '<div class="label">Component</div>';
+            html += '<div class="file">' + chain[0].file + '</div>';
+            copyLines.push('Component: ' + chain[0].file);
+            if (chain.length > 1) {
+                html += '<div class="label" style="margin-top:4px">Parent chain</div>';
+                const chainStr = chain.map(c => c.name).join(' > ');
+                html += '<div class="chain">' + chainStr + '</div>';
+                copyLines.push('Chain: ' + chainStr);
+            }
+        } else {
+            html += '<div class="no-vue">No Vue component found</div>';
+            copyLines.push('No Vue component found');
+        }
+        if (inertiaPage) {
+            html += '<div class="label" style="margin-top:4px">Inertia page</div>';
+            html += '<div class="inertia">' + inertiaPage + '</div>';
+            copyLines.push('Inertia page: ' + inertiaPage);
+        }
+        lastInspectData = copyLines.join('\\n');
+        html += '<button class="copy-btn" id="__wove_inspector_copy">Copy</button>';
+        tooltip.innerHTML = html;
+        tooltip.style.display = 'block';
+        positionTooltip(e);
+
+        const copyBtn = document.getElementById('__wove_inspector_copy');
+        if (copyBtn) {
+            copyBtn.addEventListener('click', function(ev) {
+                ev.preventDefault();
+                ev.stopPropagation();
+                navigator.clipboard.writeText(lastInspectData).then(function() {
+                    copyBtn.textContent = 'Copied!';
+                    setTimeout(function() { copyBtn.textContent = 'Copy'; }, 1200);
+                });
+            });
+        }
+    }
+
+    function positionTooltip(e) {
+        const x = e.clientX + 12;
+        const y = e.clientY + 12;
+        const rect = tooltip.getBoundingClientRect();
+        const maxX = window.innerWidth - (rect.width || 300) - 8;
+        const maxY = window.innerHeight - (rect.height || 100) - 8;
+        tooltip.style.left = Math.min(x, maxX) + 'px';
+        tooltip.style.top = Math.min(y, maxY) + 'px';
+    }
+
+    function onMouseOver(e) {
+        if (locked) return;
+        const el = e.target;
+        if (el === tooltip || tooltip.contains(el)) return;
+        if (highlighted) highlighted.classList.remove('__wove_inspector_highlight');
+        highlighted = el;
+        el.classList.add('__wove_inspector_highlight');
+        const chain = getVueComponentChain(el);
+        const inertiaPage = getInertiaPage();
+        updateTooltip(e, chain, inertiaPage);
+    }
+
+    function onMouseMove(e) {
+        if (locked) return;
+        positionTooltip(e);
+    }
+
+    function onClick(e) {
+        if (e.target === tooltip || tooltip.contains(e.target)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (locked) {
+            locked = false;
+            tooltip.classList.remove('locked');
+        } else {
+            locked = true;
+            tooltip.classList.add('locked');
+        }
+    }
+
+    function onKeyDown(e) {
+        if (e.key === 'Escape') {
+            if (locked) {
+                locked = false;
+                tooltip.classList.remove('locked');
+            }
+        }
+    }
+
+    document.addEventListener('mouseover', onMouseOver, true);
+    document.addEventListener('mousemove', onMouseMove, true);
+    document.addEventListener('click', onClick, true);
+    document.addEventListener('keydown', onKeyDown, true);
+
+    window.__woveInspectorCleanup = function() {
+        document.removeEventListener('mouseover', onMouseOver, true);
+        document.removeEventListener('mousemove', onMouseMove, true);
+        document.removeEventListener('click', onClick, true);
+        document.removeEventListener('keydown', onKeyDown, true);
+        if (highlighted) highlighted.classList.remove('__wove_inspector_highlight');
+        tooltip.remove();
+        style.remove();
+        delete window.__woveInspectorActive;
+        delete window.__woveInspectorCleanup;
+    };
+})();
+`;
+
+const INSPECTOR_CLEANUP_JS = `
+    if (window.__woveInspectorCleanup) window.__woveInspectorCleanup();
+`;
+
+const CONSOLE_CAPTURE_JS = `
+(function() {
+    if (window.__woveConsoleHooked) return;
+    window.__woveConsoleHooked = true;
+    window.__woveConsoleLogs = [];
+    var maxLogs = 500;
+    var origLog = console.log;
+    var origWarn = console.warn;
+    var origError = console.error;
+    var origInfo = console.info;
+    var origDebug = console.debug;
+
+    function capture(level, args) {
+        var msg = Array.prototype.map.call(args, function(a) {
+            if (typeof a === 'string') return a;
+            try { return JSON.stringify(a); } catch(e) { return String(a); }
+        }).join(' ');
+        if (msg.length > 2000) msg = msg.slice(0, 2000) + '...';
+        window.__woveConsoleLogs.push({ level: level, message: msg, timestamp: Date.now() });
+        if (window.__woveConsoleLogs.length > maxLogs) {
+            window.__woveConsoleLogs = window.__woveConsoleLogs.slice(-maxLogs);
+        }
+    }
+
+    console.log = function() { capture('log', arguments); origLog.apply(console, arguments); };
+    console.warn = function() { capture('warn', arguments); origWarn.apply(console, arguments); };
+    console.error = function() { capture('error', arguments); origError.apply(console, arguments); };
+    console.info = function() { capture('info', arguments); origInfo.apply(console, arguments); };
+    console.debug = function() { capture('debug', arguments); origDebug.apply(console, arguments); };
+})();
+`;
+
 
 function getWebviewPreloadUrl(env: WebViewEnv) {
     if (webviewPreloadUrl == null) {
@@ -73,6 +339,9 @@ export class WebViewModel implements ViewModel {
     typeaheadOpen: PrimitiveAtom<boolean>;
     partitionOverride: PrimitiveAtom<string> | null;
     userAgentType: Atom<string>;
+    inspectorActive: PrimitiveAtom<boolean>;
+    consoleOpen: PrimitiveAtom<boolean>;
+    consoleLogs: PrimitiveAtom<ConsoleLogEntry[]>;
     env: WebViewEnv;
 
     constructor({ blockId, nodeModel, tabModel, waveEnv }: ViewModelInitType) {
@@ -111,6 +380,9 @@ export class WebViewModel implements ViewModel {
 
         this.mediaPlaying = atom(false);
         this.mediaMuted = atom(false);
+        this.inspectorActive = atom(false);
+        this.consoleOpen = atom(false);
+        this.consoleLogs = atom<ConsoleLogEntry[]>([]);
 
         this.viewText = atom((get) => {
             const homepageUrl = get(this.homepageUrl);
@@ -198,6 +470,34 @@ export class WebViewModel implements ViewModel {
                 });
             }
 
+            const inspectorActive = get(this.inspectorActive);
+            buttons.push({
+                elemtype: "iconbutton",
+                icon: "code",
+                title: inspectorActive ? "Component Inspector (Active)" : "Component Inspector",
+                className: clsx("toggle", inspectorActive && "active"),
+                click: () => {
+                    this.toggleInspector();
+                },
+            });
+
+            const consoleOpen = get(this.consoleOpen);
+            const consoleLogs = get(this.consoleLogs);
+            const errorCount = consoleLogs.filter((l) => l.level === "error").length;
+            buttons.push({
+                elemtype: "iconbutton",
+                icon: "terminal",
+                title: consoleOpen
+                    ? "Console (Open)"
+                    : errorCount > 0
+                      ? `Console (${errorCount} error${errorCount !== 1 ? "s" : ""})`
+                      : "Console",
+                className: clsx("toggle", consoleOpen && "active", errorCount > 0 && !consoleOpen && "has-errors"),
+                click: () => {
+                    globalStore.set(this.consoleOpen, !consoleOpen);
+                },
+            });
+
             buttons.push({
                 elemtype: "iconbutton",
                 icon: "arrow-up-right-from-square",
@@ -217,6 +517,34 @@ export class WebViewModel implements ViewModel {
 
     get viewComponent(): ViewComponent {
         return WebView;
+    }
+
+    toggleInspector() {
+        const isActive = globalStore.get(this.inspectorActive);
+        if (isActive) {
+            this.removeInspector();
+        } else {
+            this.injectInspector();
+        }
+    }
+
+    injectInspector() {
+        const webview = this.webviewRef.current;
+        if (!webview) return;
+        globalStore.set(this.inspectorActive, true);
+        webview.executeJavaScript(INSPECTOR_JS).catch((e: any) => {
+            console.error("Failed to inject inspector", e);
+            globalStore.set(this.inspectorActive, false);
+        });
+    }
+
+    removeInspector() {
+        const webview = this.webviewRef.current;
+        if (!webview) return;
+        globalStore.set(this.inspectorActive, false);
+        webview.executeJavaScript(INSPECTOR_CLEANUP_JS).catch((e: any) => {
+            console.error("Failed to remove inspector", e);
+        });
     }
 
     /**
@@ -836,6 +1164,75 @@ function WebViewPreviewFallback({ url }: { url?: string | null }) {
     );
 }
 
+const CONSOLE_LEVEL_ICONS: Record<string, string> = {
+    log: "circle-info",
+    info: "circle-info",
+    warn: "triangle-exclamation",
+    error: "circle-xmark",
+    debug: "bug",
+};
+
+const CONSOLE_LEVEL_CLASSES: Record<string, string> = {
+    log: "console-log",
+    info: "console-info",
+    warn: "console-warn",
+    error: "console-error",
+    debug: "console-debug",
+};
+
+function WebConsolePanel({ model }: { model: WebViewModel }) {
+    const isOpen = useAtomValue(model.consoleOpen);
+    const logs = useAtomValue(model.consoleLogs);
+    const scrollRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        // Auto-open on first error
+        if (!globalStore.get(model.consoleOpen) && logs.length > 0 && logs[logs.length - 1].level === "error") {
+            globalStore.set(model.consoleOpen, true);
+        }
+    }, [logs.length]);
+
+    useEffect(() => {
+        if (scrollRef.current) {
+            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        }
+    }, [logs.length, isOpen]);
+
+    if (!isOpen) return null;
+
+    return (
+        <div className="webview-console">
+            <div className="webview-console-header">
+                <span className="webview-console-title">Console</span>
+                <span className="webview-console-count">{logs.length}</span>
+                <button
+                    className="webview-console-clear"
+                    onClick={() => globalStore.set(model.consoleLogs, [])}
+                    title="Clear console"
+                >
+                    <i className="fa-solid fa-ban" />
+                </button>
+                <button
+                    className="webview-console-close"
+                    onClick={() => globalStore.set(model.consoleOpen, false)}
+                    title="Close console"
+                >
+                    <i className="fa-solid fa-xmark" />
+                </button>
+            </div>
+            <div className="webview-console-logs" ref={scrollRef}>
+                {logs.length === 0 && <div className="webview-console-empty">No console output</div>}
+                {logs.map((entry, i) => (
+                    <div key={i} className={clsx("webview-console-entry", CONSOLE_LEVEL_CLASSES[entry.level])}>
+                        <i className={clsx("fa-solid", `fa-${CONSOLE_LEVEL_ICONS[entry.level] || "circle"}`)} />
+                        <span className="webview-console-msg">{entry.message}</span>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
 const WebView = memo(({ model, onFailLoad, blockRef, initialSrc }: WebViewProps) => {
     const env = useWaveEnv<WebViewEnv>();
     const blockData = useAtomValue(model.blockAtom);
@@ -1026,6 +1423,9 @@ const WebView = memo(({ model, onFailLoad, blockRef, initialSrc }: WebViewProps)
             model.setRefreshIcon("rotate-right");
             model.setIsLoading(false);
             setBgColor();
+            if (globalStore.get(model.inspectorActive)) {
+                webview.executeJavaScript(INSPECTOR_JS).catch(() => {});
+            }
         };
         const failLoadHandler = (e: any) => {
             if (e.errorCode === -3) {
@@ -1050,6 +1450,8 @@ const WebView = memo(({ model, onFailLoad, blockRef, initialSrc }: WebViewProps)
         const handleDomReady = () => {
             globalStore.set(model.domReady, true);
             setBgColor();
+            // Inject console capture hook so AI tools can read console output
+            webview.executeJavaScript(CONSOLE_CAPTURE_JS).catch(() => {});
         };
         const handleMediaPlaying = () => {
             model.setMediaPlaying(true);
@@ -1071,6 +1473,21 @@ const WebView = memo(({ model, onFailLoad, blockRef, initialSrc }: WebViewProps)
         webview.addEventListener("media-started-playing", handleMediaPlaying);
         webview.addEventListener("media-paused", handleMediaPaused);
         webview.addEventListener("found-in-page", onFoundInPage);
+
+        // Capture console messages
+        const consoleMessageHandler = (e: any) => {
+            const levelMap: Record<number, string> = { 0: "log", 1: "warn", 2: "error" };
+            const entry: ConsoleLogEntry = {
+                level: levelMap[e.level] || "log",
+                message: e.message || "",
+                timestamp: Date.now(),
+            };
+            const current = globalStore.get(model.consoleLogs);
+            // Keep last 500 entries
+            const updated = current.length >= 500 ? [...current.slice(-499), entry] : [...current, entry];
+            globalStore.set(model.consoleLogs, updated);
+        };
+        webview.addEventListener("console-message", consoleMessageHandler);
 
         // Track page title for AI context
         const pageTitleHandler = (e: any) => {
@@ -1098,6 +1515,7 @@ const WebView = memo(({ model, onFailLoad, blockRef, initialSrc }: WebViewProps)
             webview.removeEventListener("media-started-playing", handleMediaPlaying);
             webview.removeEventListener("media-paused", handleMediaPaused);
             webview.removeEventListener("found-in-page", onFoundInPage);
+            webview.removeEventListener("console-message", consoleMessageHandler);
         };
     }, []);
 
@@ -1123,6 +1541,7 @@ const WebView = memo(({ model, onFailLoad, blockRef, initialSrc }: WebViewProps)
                     <div>{errorText}</div>
                 </div>
             )}
+            <WebConsolePanel model={model} />
             <Search {...searchProps} />
             <BookmarkTypeahead model={model} blockRef={blockRef} />
         </Fragment>

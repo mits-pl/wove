@@ -1002,6 +1002,12 @@ export class RpcApiType {
         return client.wshRpcCall("waveaienabletelemetry", null, opts);
     }
 
+    // command "waveaigetmodifiedfiles" [call]
+    WaveAIGetModifiedFilesCommand(client: WshClient, data: CommandWaveAIGetModifiedFilesData, opts?: RpcOpts): Promise<CommandWaveAIGetModifiedFilesRtnData> {
+        if (this.mockClient) return this.mockClient.mockWshRpcCall(client, "waveaigetmodifiedfiles", data, opts);
+        return client.wshRpcCall("waveaigetmodifiedfiles", data, opts);
+    }
+
     // command "waveaigettooldiff" [call]
     WaveAIGetToolDiffCommand(client: WshClient, data: CommandWaveAIGetToolDiffData, opts?: RpcOpts): Promise<CommandWaveAIGetToolDiffRtnData> {
         if (this.mockClient) return this.mockClient.mockWshRpcCall(client, "waveaigettooldiff", data, opts);

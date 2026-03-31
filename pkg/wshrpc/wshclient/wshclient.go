@@ -991,6 +991,12 @@ func WaveAIEnableTelemetryCommand(w *wshutil.WshRpc, opts *wshrpc.RpcOpts) error
 	return err
 }
 
+// command "waveaigetmodifiedfiles", wshserver.WaveAIGetModifiedFilesCommand
+func WaveAIGetModifiedFilesCommand(w *wshutil.WshRpc, data wshrpc.CommandWaveAIGetModifiedFilesData, opts *wshrpc.RpcOpts) (*wshrpc.CommandWaveAIGetModifiedFilesRtnData, error) {
+	resp, err := sendRpcRequestCallHelper[*wshrpc.CommandWaveAIGetModifiedFilesRtnData](w, "waveaigetmodifiedfiles", data, opts)
+	return resp, err
+}
+
 // command "waveaigettooldiff", wshserver.WaveAIGetToolDiffCommand
 func WaveAIGetToolDiffCommand(w *wshutil.WshRpc, data wshrpc.CommandWaveAIGetToolDiffData, opts *wshrpc.RpcOpts) (*wshrpc.CommandWaveAIGetToolDiffRtnData, error) {
 	resp, err := sendRpcRequestCallHelper[*wshrpc.CommandWaveAIGetToolDiffRtnData](w, "waveaigettooldiff", data, opts)

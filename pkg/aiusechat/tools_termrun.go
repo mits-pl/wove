@@ -52,15 +52,97 @@ func parseTermRunCommandInput(input any) (*TermRunCommandInput, error) {
 		return nil, fmt.Errorf("invalid input format: %w", err)
 	}
 
-	if result.WidgetId == "" {
-		return nil, fmt.Errorf("widget_id is required")
-	}
-
+	// widget_id is optional — if empty, a terminal will be auto-created
 	if result.Command == "" {
 		return nil, fmt.Errorf("command is required")
 	}
 
 	return result, nil
+}
+
+const shellReadyTimeout = 10 * time.Second
+
+// createTerminalWidget creates a new terminal widget in the given tab and waits for shell integration to become ready.
+func createTerminalWidget(tabId string, owned *uctypes.OwnedWidgetSet) (string, error) {
+	rpcClient := wshclient.GetBareRpcClient()
+	oref, err := wshclient.CreateBlockCommand(rpcClient, wshrpc.CommandCreateBlockData{
+		TabId: tabId,
+		BlockDef: &waveobj.BlockDef{
+			Meta: map[string]any{
+				waveobj.MetaKey_View: "term",
+			},
+		},
+		Focused: false,
+	}, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create terminal widget: %w", err)
+	}
+
+	fullBlockId := oref.OID
+	if owned != nil {
+		owned.Add(fullBlockId)
+	}
+
+	// Wait for shell integration to become ready
+	blockORef := waveobj.MakeORef(waveobj.OType_Block, fullBlockId)
+	waitCtx, cancel := context.WithTimeout(context.Background(), shellReadyTimeout)
+	defer cancel()
+
+	watchCh, unsub := wstore.WatchRTInfoShellState(blockORef)
+	defer unsub()
+
+	// Check if already ready
+	rtInfo := wstore.GetRTInfo(blockORef)
+	if rtInfo != nil && rtInfo.ShellIntegration && rtInfo.ShellState == "ready" {
+		return fullBlockId, nil
+	}
+
+	for {
+		select {
+		case <-waitCtx.Done():
+			return fullBlockId, fmt.Errorf("terminal created but shell integration did not become ready within %v", shellReadyTimeout)
+		case update := <-watchCh:
+			if update != nil && update.ShellState == "ready" {
+				return fullBlockId, nil
+			}
+		}
+	}
+}
+
+// resolveOrCreateTerminal resolves an existing terminal widget or creates a new one if widget_id is empty.
+func resolveOrCreateTerminal(tabId string, widgetId string, owned *uctypes.OwnedWidgetSet) (string, error) {
+	if widgetId != "" {
+		ctx, cancelFn := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancelFn()
+		return wcore.ResolveBlockIdFromPrefix(ctx, tabId, widgetId)
+	}
+
+	// No widget_id provided — try to find an existing terminal in the tab, otherwise create one
+	ctx, cancelFn := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelFn()
+
+	tabObj, err := wstore.DBMustGet[*waveobj.Tab](ctx, tabId)
+	if err == nil {
+		for _, blockId := range tabObj.BlockIds {
+			block, err := wstore.DBGet[*waveobj.Block](ctx, blockId)
+			if err != nil || block == nil || block.Meta == nil {
+				continue
+			}
+			viewType, _ := block.Meta["view"].(string)
+			if viewType != "term" {
+				continue
+			}
+			// Found a terminal — check if it has shell integration and is ready
+			blockORef := waveobj.MakeORef(waveobj.OType_Block, blockId)
+			rtInfo := wstore.GetRTInfo(blockORef)
+			if rtInfo != nil && rtInfo.ShellIntegration && rtInfo.ShellState == "ready" {
+				return blockId, nil
+			}
+		}
+	}
+
+	// No usable terminal found — create one
+	return createTerminalWidget(tabId, owned)
 }
 
 // getGitBranch reads the current git branch from .git/HEAD in the given directory or its parents.
@@ -129,26 +211,29 @@ func waitForCommandCompletion(ctx context.Context, blockORef waveobj.ORef) (bool
 	}
 }
 
-func GetTermRunCommandToolDefinition(tabId string) uctypes.ToolDefinition {
+func GetTermRunCommandToolDefinition(tabId string, ownedWidgets ...*uctypes.OwnedWidgetSet) uctypes.ToolDefinition {
+	var owned *uctypes.OwnedWidgetSet
+	if len(ownedWidgets) > 0 {
+		owned = ownedWidgets[0]
+	}
 	return uctypes.ToolDefinition{
 		Name:        "term_run_command",
 		DisplayName: "Run Terminal Command",
-		Description: "Run a command in terminal and wait for it to finish, then return output. For short-lived CLI tools (git, npm, artisan, ls, grep, etc.). Has a 60-second timeout. Do NOT use for interactive or long-running programs (claude, vim, nano, top, htop, ssh, node/python REPLs, docker attach, etc.) - use term_send_input instead for those. Requires shell integration.",
+		Description: "Run a command in terminal and wait for it to finish, then return output. For short-lived CLI tools (git, npm, artisan, ls, grep, etc.). Has a 60-second timeout. Do NOT use for interactive or long-running programs (claude, vim, nano, top, htop, ssh, node/python REPLs, docker attach, etc.) - use term_send_input instead for those. If widget_id is omitted, auto-selects an existing ready terminal or creates a new one.",
 		ToolLogName: "term:runcommand",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"widget_id": map[string]any{
 					"type":        "string",
-					"description": "8-character widget ID of the terminal widget",
+					"description": "8-character widget ID of the terminal widget. Optional — if omitted, uses an existing ready terminal or auto-creates one.",
 				},
 				"command": map[string]any{
 					"type":        "string",
 					"description": "The command to execute in the terminal (e.g., 'php artisan migrate:status', 'composer validate', 'ls -la')",
 				},
 			},
-			"required":             []string{"widget_id", "command"},
-			"additionalProperties": false,
+			"required": []string{"command"},
 		},
 		ToolCallDesc: func(input any, output any, toolUseData *uctypes.UIMessageDataToolUse) string {
 			parsed, err := parseTermRunCommandInput(input)
@@ -160,9 +245,15 @@ func GetTermRunCommandToolDefinition(tabId string) uctypes.ToolDefinition {
 				cmdStr = cmdStr[:57] + "..."
 			}
 			if output != nil {
-				return fmt.Sprintf("ran `%s` in %s", cmdStr, parsed.WidgetId)
+				if parsed.WidgetId != "" {
+					return fmt.Sprintf("ran `%s` in %s", cmdStr, parsed.WidgetId)
+				}
+				return fmt.Sprintf("ran `%s`", cmdStr)
 			}
-			return fmt.Sprintf("running `%s` in %s", cmdStr, parsed.WidgetId)
+			if parsed.WidgetId != "" {
+				return fmt.Sprintf("running `%s` in %s", cmdStr, parsed.WidgetId)
+			}
+			return fmt.Sprintf("running `%s`", cmdStr)
 		},
 		ToolApproval: func(input any) string {
 			return uctypes.ApprovalNeedsApproval
@@ -171,6 +262,11 @@ func GetTermRunCommandToolDefinition(tabId string) uctypes.ToolDefinition {
 			parsed, err := parseTermRunCommandInput(input)
 			if err != nil {
 				return err
+			}
+
+			// If no widget_id, we'll auto-create in the callback — skip verify
+			if parsed.WidgetId == "" {
+				return nil
 			}
 
 			ctx, cancelFn := context.WithTimeout(context.Background(), 5*time.Second)
@@ -201,10 +297,7 @@ func GetTermRunCommandToolDefinition(tabId string) uctypes.ToolDefinition {
 				return nil, err
 			}
 
-			ctx, cancelFn := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancelFn()
-
-			fullBlockId, err := wcore.ResolveBlockIdFromPrefix(ctx, tabId, parsed.WidgetId)
+			fullBlockId, err := resolveOrCreateTerminal(tabId, parsed.WidgetId, owned)
 			if err != nil {
 				return nil, fmt.Errorf("terminal widget not found: %w", err)
 			}

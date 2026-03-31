@@ -6,6 +6,7 @@ package aiusechat
 import (
 	"context"
 	"log"
+	"os"
 
 	"github.com/woveterm/wove/pkg/aiusechat/uctypes"
 	"github.com/woveterm/wove/pkg/mcpclient"
@@ -48,8 +49,9 @@ func generateMCPStateAndTools(chatOpts uctypes.WaveChatOpts) (string, []uctypes.
 func getTerminalCwd(ctx context.Context, tabId string) string {
 	tabObj, err := wstore.DBMustGet[*waveobj.Tab](ctx, tabId)
 	if err != nil {
-		return ""
+		return getCwdFallback()
 	}
+	// First pass: look for terminal blocks with CWD
 	for _, blockId := range tabObj.BlockIds {
 		block, err := wstore.DBGet[*waveobj.Block](ctx, blockId)
 		if err != nil || block == nil || block.Meta == nil {
@@ -62,6 +64,17 @@ func getTerminalCwd(ctx context.Context, tabId string) string {
 		if cwd, ok := block.Meta["cmd:cwd"].(string); ok && cwd != "" {
 			return cwd
 		}
+	}
+	// No terminal found — fallback to process CWD
+	return getCwdFallback()
+}
+
+func getCwdFallback() string {
+	if cwd, err := os.Getwd(); err == nil && cwd != "" {
+		return cwd
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return home
 	}
 	return ""
 }

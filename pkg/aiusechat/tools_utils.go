@@ -187,7 +187,7 @@ func GetWaveUtilsToolDefinition(tabId string) uctypes.ToolDefinition {
 				return aiplan.FormatPlanStatus(plan), nil
 
 			default:
-				return "", fmt.Errorf("unknown action: %s", action)
+				return "", fmt.Errorf("unknown action: %q — valid actions: session_history, project_instructions, plan_create, plan_update, plan_status. Ensure input is valid JSON, e.g. {\"action\": \"project_instructions\", \"sections\": [\"overview\"]}", action)
 			}
 		},
 	}

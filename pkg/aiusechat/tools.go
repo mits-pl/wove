@@ -128,6 +128,8 @@ func MakeBlockShortDesc(block *waveobj.Block) string {
 		return handleTsunamiBlockDesc(block)
 	case "aifilediff":
 		return "" // AI doesn't need to see these
+	case "aimodifiedfiles":
+		return "" // AI doesn't need to see these
 	case "waveconfig":
 		if file, hasFile := block.Meta["file"].(string); hasFile && file != "" {
 			return fmt.Sprintf("wave config editor for %q", file)
@@ -177,6 +179,7 @@ func GenerateTabStateAndTools(ctx context.Context, tabid string, widgetAccess bo
 		tools = append(tools, GetReadDirToolDefinition())
 		tools = append(tools, GetWriteTextFileToolDefinition())
 		tools = append(tools, GetEditTextFileToolDefinition())
+		tools = append(tools, GetGrepToolDefinition())
 
 		// Consolidated utility tool (plans, session history, project instructions)
 		tools = append(tools, GetWaveUtilsToolDefinition(tabid))
@@ -196,12 +199,10 @@ func GenerateTabStateAndTools(ctx context.Context, tabid string, widgetAccess bo
 				tools = append(tools, blockTools...)
 			}
 		}
-		if viewTypes["term"] {
-			tools = append(tools, GetTermGetScrollbackToolDefinition(tabid))
-			tools = append(tools, GetTermRunCommandToolDefinition(tabid))
-			tools = append(tools, GetTermSendInputToolDefinition(tabid))
-			// tools = append(tools, GetTermCommandOutputToolDefinition(tabid))
-		}
+		// Terminal tools are always available — term_run_command auto-creates a terminal if none exists
+		tools = append(tools, GetTermGetScrollbackToolDefinition(tabid))
+		tools = append(tools, GetTermRunCommandToolDefinition(tabid, chatOpts.OwnedWidgets))
+		tools = append(tools, GetTermSendInputToolDefinition(tabid))
 		if viewTypes["web"] {
 			tools = append(tools, GetWebCaptureToolDefinition(tabid))
 			tools = append(tools, GetWebNavigateToolDefinition(tabid))
@@ -213,6 +214,8 @@ func GenerateTabStateAndTools(ctx context.Context, tabid string, widgetAccess bo
 			tools = append(tools, GetWebMouseClickToolDefinition(tabid))
 			tools = append(tools, GetWebTypeInputToolDefinition(tabid))
 			tools = append(tools, GetWebPressKeyToolDefinition(tabid))
+			tools = append(tools, GetWebInspectVueToolDefinition(tabid))
+			tools = append(tools, GetWebGetConsoleToolDefinition(tabid))
 		}
 		// web_open is always available (doesn't require an existing web widget)
 		tools = append(tools, GetWebOpenToolDefinition(tabid, chatOpts.OwnedWidgets))

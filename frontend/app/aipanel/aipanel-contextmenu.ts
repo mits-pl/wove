@@ -215,6 +215,13 @@ export async function handleWaveAIContextMenu(e: React.MouseEvent, showCopy: boo
         },
     });
 
+    menu.push({
+        label: "Modified Files",
+        click: () => {
+            model.openModifiedFiles();
+        },
+    });
+
     if (model.canCloseWaveAIPanel()) {
         menu.push({ type: "separator" });
 
