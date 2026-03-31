@@ -39,3 +39,8 @@ test-results.xml
 docsite/
 
 .kilo-format-temp-*
+
+# Build artifacts (Go binaries)
+/server
+/wavesrv-dev
+/wsh
