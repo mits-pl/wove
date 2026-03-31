@@ -168,7 +168,11 @@ This document lists all modifications and additions made in Wove.
 Systematic improvements to the AI system prompt and tool descriptions to produce higher-quality, project-consistent code. Inspired by patterns from the Claude Code codebase.
 
 ### System Prompt Additions
-- **Code Discipline** — explicit rules on what NOT to do: no unnecessary refactoring beyond scope, no error handling for impossible scenarios, no premature abstractions, no comments/docstrings on unchanged code, no gold-plating
+- **Output Discipline** — numeric length anchors: ≤25 words between tool calls, ≤100 words in final responses; no echoing file content; no colons before tool calls; no time estimates; "cold pickup" communication model
+- **Failure Diagnosis** — multi-step protocol: read the error, check assumptions, try a focused fix; never retry blindly; never abandon after one failure; only ask user after genuine investigation
+- **Code Discipline** — explicit rules on what NOT to do: no unnecessary refactoring beyond scope, no error handling for impossible scenarios, no premature abstractions, no comments/docstrings on unchanged code, no gold-plating, no backwards-compatibility hacks (no `_unused` vars, no re-exports, no `// removed` comments)
+- **Comment Preservation** — don't remove existing comments unless removing the code they describe; comments may encode constraints from past bugs not visible in the current diff
+- **Proactive Bug Discovery** — if the user's request is based on a misconception, or there's a bug adjacent to what you're working on, say so; collaborator mindset, not just executor
 - **Verification** — AI must run linter/formatter and tests after writing code; never report "done" without at least one verification command; explicitly state when verification is not possible
 - **Honesty** — faithful outcome reporting: never suppress failing tests, never claim success without evidence, acknowledge mistakes immediately
 - **Security** — OWASP-aware code generation: parameterized queries (no SQL concatenation), output escaping (no raw user input in HTML), no secrets in code, no shell injection via user input, flag security issues in existing code
