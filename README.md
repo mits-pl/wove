@@ -24,6 +24,7 @@ Built on the [Wave Terminal](https://github.com/wavetermdev/waveterm) engine (Go
 | MCP native | No | Yes | **Yes (auto-detect)** |
 | Execution plans with persistence | No | No | **Yes** |
 | Project convention enforcement | Partial | .claude files | **WAVE.md + CLAUDE.md + .cursorrules** |
+| Code quality guardrails | No | Yes (prompt-level) | **Yes (prompt + tool-level enforcement)** |
 | Skills system (on-demand tools) | No | Slash commands | **SKILL.md + autocomplete** |
 | Multi-model BYOK | Limited | Anthropic only | **10 presets, any provider** |
 | Runs locally, no cloud agent | IDE extension | CLI | **Desktop app** |
@@ -78,6 +79,19 @@ Extensible skill definitions (SKILL.md files) with:
 - `invoke_skill` tool for on-demand loading
 - Slash command autocomplete in AI input (`/seo-audit`, `/seo-technical`, etc.)
 - Skills run autonomously end-to-end without confirmation prompts
+
+### Code Quality Guardrails
+Wove enforces multiple layers of code quality to ensure generated code matches your project's conventions:
+
+- **Read-before-edit** — the AI must read a file before modifying it (enforced at tool level, not just prompt)
+- **Architecture matching** — find 2-3 similar files, study their patterns, match the style exactly
+- **Code discipline** — no unnecessary refactoring, no premature abstractions, no gold-plating beyond what was asked
+- **Security awareness** — OWASP-aware: parameterized queries, output escaping, no secrets in code
+- **Self-review** — after every write, re-read the file and compare with the reference for style drift
+- **Verification** — run linters and tests after code changes; never claim "done" without evidence
+- **Warm context** — technology-specific conventions from WAVE.md are re-injected when editing files of that type
+- **Sibling references** — when creating new files, an existing file from the same directory is automatically attached as a style reference
+- **Project instructions override** — WAVE.md/CLAUDE.md rules explicitly override the AI's default behavior
 
 ### Widget Ownership & Cleanup
 Agent tracks which terminals and browsers it created. Closes them when done. Cannot close user's pre-existing widgets.

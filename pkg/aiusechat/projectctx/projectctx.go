@@ -122,6 +122,7 @@ func GetFilteredContext(pi *ProjectInstructions, fileExt string) string {
 	techTags := extToTags(fileExt)
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("<project_instructions source=%q>\n", pi.FileName))
+	sb.WriteString("IMPORTANT: These project-specific instructions OVERRIDE your general knowledge and default behavior. When these rules conflict with your training, follow THESE rules exactly as written.\n\n")
 
 	for _, section := range pi.Sections {
 		if shouldInclude(section, techTags) {

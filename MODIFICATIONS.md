@@ -164,6 +164,35 @@ This document lists all modifications and additions made in Wove.
 - Cleanup instructions — close terminals and browsers after finishing
 - Autonomous execution — never ask "should I continue?" during multi-step tasks
 
+## Code Quality Guardrails (Claude Code–inspired)
+Systematic improvements to the AI system prompt and tool descriptions to produce higher-quality, project-consistent code. Inspired by patterns from the Claude Code codebase.
+
+### System Prompt Additions
+- **Code Discipline** — explicit rules on what NOT to do: no unnecessary refactoring beyond scope, no error handling for impossible scenarios, no premature abstractions, no comments/docstrings on unchanged code, no gold-plating
+- **Verification** — AI must run linter/formatter and tests after writing code; never report "done" without at least one verification command; explicitly state when verification is not possible
+- **Honesty** — faithful outcome reporting: never suppress failing tests, never claim success without evidence, acknowledge mistakes immediately
+- **Security** — OWASP-aware code generation: parameterized queries (no SQL concatenation), output escaping (no raw user input in HTML), no secrets in code, no shell injection via user input, flag security issues in existing code
+- **File Creation Discipline** — prefer editing existing files over creating new ones; grep for existing functionality before creating; always read a sibling file first when creating new files
+- **Self-Review** — after every write/edit: re-read the file, compare with reference for style drift, check for debug code and correct imports
+
+### Tool Description Enhancements
+- **`read_text_file`** — teaches AI to read the ENTIRE file before editing (not just the target area), use offset/count only for 500+ line files
+- **`edit_text_file`** — teaches proper usage: old_str must match exactly once (including whitespace), include 2-4 lines of context for uniqueness, preserve indentation, prefer multiple small edits over one large replacement
+- **`write_text_file`** — teaches: prefer edit over write for existing files, find and read sibling files before creating new ones, don't create files unless necessary
+
+### Project Instructions Override
+- `<project_instructions>` tags now include explicit "IMPORTANT: These project-specific instructions OVERRIDE your general knowledge" header, ensuring WAVE.md/CLAUDE.md rules take precedence over default AI behavior
+
+### Warm Context Injection in Tool Loop
+- `processAllToolCalls` now tracks file extensions of modified files (write/edit operations)
+- After tool execution, `ExtractWarmContext` is called with the relevant file extension to inject technology-filtered WAVE.md sections (e.g., PHP conventions when editing .php files, Vue conventions when editing .vue files)
+- Context is refreshed per tool step, not just on first message
+
+### Sibling File Reference on New File Creation
+- `findSiblingReference()` function finds an existing file with the same extension in the same directory
+- When `write_text_file` creates a new file, the sibling's content (up to 3KB) is attached to the tool result as `sibling_reference`
+- AI sees "Compare your code with this sibling file to ensure consistent style" and can immediately align patterns
+
 ## Terminal Tool Improvements
 - `term_run_command` — event-driven output via `WatchRTInfoShellState` channel (replaced 250ms polling)
 - `term_send_input` — `press_enter` parameter for auto-appending carriage return

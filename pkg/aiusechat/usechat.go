@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/user"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -367,7 +368,8 @@ func processToolCall(backend UseChatBackend, toolCall uctypes.WaveToolCall, chat
 	return result
 }
 
-func processAllToolCalls(backend UseChatBackend, stopReason *uctypes.WaveStopReason, chatOpts uctypes.WaveChatOpts, sseHandler *sse.SSEHandlerCh, metrics *uctypes.AIMetrics) {
+// processAllToolCalls executes tool calls and returns file extensions of modified files (for warm context injection).
+func processAllToolCalls(backend UseChatBackend, stopReason *uctypes.WaveStopReason, chatOpts uctypes.WaveChatOpts, sseHandler *sse.SSEHandlerCh, metrics *uctypes.AIMetrics) []string {
 	// Create and send all data-tooluse packets at the beginning
 	for i := range stopReason.ToolCalls {
 		toolCall := &stopReason.ToolCalls[i]
@@ -391,6 +393,8 @@ func processAllToolCalls(backend UseChatBackend, stopReason *uctypes.WaveStopRea
 	// At this point, all ToolCalls are guaranteed to have non-nil ToolUseData
 
 	var toolResults []uctypes.AIToolResult
+	// Track file extensions of modified files for warm context injection
+	modifiedExts := make(map[string]bool)
 	for _, toolCall := range stopReason.ToolCalls {
 		if sseHandler.Err() != nil {
 			log.Printf("AI tool processing stopped: %v\n", sseHandler.Err())
@@ -398,6 +402,17 @@ func processAllToolCalls(backend UseChatBackend, stopReason *uctypes.WaveStopRea
 		}
 		result := processToolCall(backend, toolCall, chatOpts, sseHandler, metrics)
 		toolResults = append(toolResults, result)
+		// Collect file extensions from write/edit tool calls
+		if toolCall.Name == "write_text_file" || toolCall.Name == "edit_text_file" {
+			if inputMap, ok := toolCall.Input.(map[string]any); ok {
+				if filename, ok := inputMap["filename"].(string); ok {
+					ext := filepath.Ext(filename)
+					if ext != "" {
+						modifiedExts[ext] = true
+					}
+				}
+			}
+		}
 	}
 
 	// Cleanup: unregister approvals, remove incomplete/canceled tool calls, and filter results
@@ -425,6 +440,13 @@ func processAllToolCalls(backend UseChatBackend, stopReason *uctypes.WaveStopRea
 			}
 		}
 	}
+
+	// Return unique extensions of modified files
+	var exts []string
+	for ext := range modifiedExts {
+		exts = append(exts, ext)
+	}
+	return exts
 }
 
 func RunAIChat(ctx context.Context, sseHandler *sse.SSEHandlerCh, backend UseChatBackend, chatOpts uctypes.WaveChatOpts) (*uctypes.AIMetrics, error) {
@@ -530,10 +552,25 @@ func RunAIChat(ctx context.Context, sseHandler *sse.SSEHandlerCh, backend UseCha
 		}
 		if stopReason != nil && stopReason.Kind == uctypes.StopKindToolUse {
 			metrics.ToolUseCount += len(stopReason.ToolCalls)
-			processAllToolCalls(backend, stopReason, chatOpts, sseHandler, metrics)
+			modifiedExts := processAllToolCalls(backend, stopReason, chatOpts, sseHandler, metrics)
 			// Compact old tool results to prevent context window overflow.
 			// Keep the 6 most recent tool results at full length, truncate older ones to 2000 chars.
 			chatstore.DefaultChatStore.CompactOldToolResults(chatOpts.ChatId, 6, 2000)
+			// Inject warm context for modified file types (technology-filtered WAVE.md/CLAUDE.md sections)
+			if len(modifiedExts) > 0 {
+				cwd := ""
+				if chatOpts.TabId != "" {
+					cwd = getTerminalCwd(ctx, chatOpts.TabId)
+				}
+				if cwd != "" {
+					for _, ext := range modifiedExts {
+						warmCtx := projectctx.ExtractWarmContext(cwd, ext, 2000)
+						if warmCtx != "" {
+							chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, warmCtx)
+						}
+					}
+				}
+			}
 			// Context usage warning: after many iterations, remind the model to use sub-tasks
 			if metrics.RequestCount >= 8 && chatOpts.SubTaskDepth == 0 {
 				contextHint := fmt.Sprintf("<context_warning>You have made %d API requests in this conversation. Context window may be filling up. For remaining complex steps, consider using run_sub_task to execute them in isolated conversations to prevent context overflow.</context_warning>", metrics.RequestCount)
