@@ -45,15 +45,37 @@ func RunChatStep(
 	}
 
 	// Convert stored messages to chat completions format
+	// Apply context compaction: clear old tool results in API request to save context
 	var messages []ChatRequestMessage
+	const keepRecentToolResults = 4
+	const maxOldToolResultLen = 200
 
-	// Convert native messages
+	// Count total tool results
+	totalToolResults := 0
+	for _, genMsg := range chat.NativeMessages {
+		if m, ok := genMsg.(*StoredChatMessage); ok && m.Message.Role == "tool" {
+			totalToolResults++
+		}
+	}
+
+	toolResultSeen := 0
 	for _, genMsg := range chat.NativeMessages {
 		chatMsg, ok := genMsg.(*StoredChatMessage)
 		if !ok {
 			return nil, nil, nil, fmt.Errorf("expected StoredChatMessage, got %T", genMsg)
 		}
-		messages = append(messages, *chatMsg.Message.clean())
+		msg := *chatMsg.Message.clean()
+
+		// Compact old tool results: keep only recent N at full size
+		if msg.Role == "tool" {
+			toolResultSeen++
+			isOld := toolResultSeen <= (totalToolResults - keepRecentToolResults)
+			if isOld && len(msg.Content) > maxOldToolResultLen {
+				msg.Content = msg.Content[:maxOldToolResultLen] + fmt.Sprintf("\n[...cleared, was %d chars]", len(msg.Content))
+			}
+		}
+
+		messages = append(messages, msg)
 	}
 
 	req, err := buildChatHTTPRequest(ctx, messages, chatOpts)

@@ -526,8 +526,25 @@ func RunOpenAIChatStep(
 	}
 
 	// Convert GenAIMessages to input objects (OpenAIMessage or OpenAIFunctionCallInput)
-	var inputs []any
+	// Apply context compaction: clear old tool results in the API request (not in chatstore)
+	// to keep the LLM's context window lean. Recent results are kept intact.
+	msgCount := len(chat.NativeMessages)
+	const keepRecentToolResults = 4
+	const maxOldToolResultLen = 200
+	toolResultIdx := 0 // count tool results from the end
+	// First pass: count total tool results
+	totalToolResults := 0
 	for _, genMsg := range chat.NativeMessages {
+		if m, ok := genMsg.(*OpenAIChatMessage); ok && m.FunctionCallOutput != nil {
+			totalToolResults++
+		}
+	}
+
+	var inputs []any
+	toolResultSeen := 0
+	for i, genMsg := range chat.NativeMessages {
+		_ = i
+		_ = msgCount
 		// Cast to OpenAIChatMessage
 		chatMsg, ok := genMsg.(*OpenAIChatMessage)
 		if !ok {
@@ -543,8 +560,20 @@ func RunOpenAIChatStep(
 			cleanedFunctionCall := chatMsg.FunctionCall.clean()
 			inputs = append(inputs, *cleanedFunctionCall)
 		} else if chatMsg.FunctionCallOutput != nil {
-			inputs = append(inputs, *chatMsg.FunctionCallOutput)
+			toolResultSeen++
+			isOld := toolResultSeen <= (totalToolResults - keepRecentToolResults)
+			if isOld {
+				// Compact old tool result: send truncated copy to API, keep original in chatstore
+				compacted := *chatMsg.FunctionCallOutput
+				if outputStr, ok := compacted.Output.(string); ok && len(outputStr) > maxOldToolResultLen {
+					compacted.Output = outputStr[:maxOldToolResultLen] + fmt.Sprintf("\n[...cleared, was %d chars]", len(outputStr))
+				}
+				inputs = append(inputs, compacted)
+			} else {
+				inputs = append(inputs, *chatMsg.FunctionCallOutput)
+			}
 		}
+		toolResultIdx++
 	}
 
 	req, err := buildOpenAIHTTPRequest(ctx, inputs, chatOpts, cont)
