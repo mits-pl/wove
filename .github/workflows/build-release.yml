@@ -24,25 +24,32 @@ env:
   NODE_OPTIONS: --max-old-space-size=4096
 
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          PLATFORMS="${{ github.event.inputs.platforms }}"
+          MATRIX='{"include":[]}'
+          if [[ "$PLATFORMS" == *"linux"* ]]; then
+            MATRIX=$(echo "$MATRIX" | jq '.include += [{"platform":"linux","runner":"ubuntu-latest"},{"platform":"linux","runner":"ubuntu-24.04-arm"}]')
+          fi
+          if [[ "$PLATFORMS" == *"macos"* ]]; then
+            MATRIX=$(echo "$MATRIX" | jq '.include += [{"platform":"macos","runner":"macos-latest"}]')
+          fi
+          if [[ "$PLATFORMS" == *"windows"* ]]; then
+            MATRIX=$(echo "$MATRIX" | jq '.include += [{"platform":"windows","runner":"windows-latest"}]')
+          fi
+          echo "matrix=$(echo "$MATRIX" | jq -c .)" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: setup
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - platform: linux
-            arch: x64
-            runner: ubuntu-latest
-          - platform: linux
-            arch: arm64
-            runner: ubuntu-24.04-arm
-          - platform: macos
-            arch: universal
-            runner: macos-latest
-          - platform: windows
-            arch: x64
-            runner: windows-latest
+      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
-    if: contains(github.event.inputs.platforms, matrix.platform)
     steps:
       - uses: actions/checkout@v6
         with:

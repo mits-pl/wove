@@ -234,6 +234,12 @@ See [MODIFICATIONS.md](MODIFICATIONS.md) for a complete list of changes from ups
 
 Issues and PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Support
+
+If you find Wove useful, consider buying us a coffee:
+
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?logo=buymeacoffee)](https://buymeacoffee.com/wove)
+
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE).
