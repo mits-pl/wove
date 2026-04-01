@@ -83,6 +83,11 @@ func RunChatStep(
 		return nil, nil, nil, err
 	}
 
+	// Log request size for debugging
+	if req.Body != nil && req.ContentLength > 0 {
+		log.Printf("[openaichat] request: %d messages, %d tools, body=%dKB\n", len(messages), len(chatOpts.TabTools)+len(chatOpts.Tools)+len(chatOpts.MCPTools), req.ContentLength/1024)
+	}
+
 	client, err := aiutil.MakeHTTPClient(chatOpts.Config.ProxyURL)
 	if err != nil {
 		return nil, nil, nil, err
@@ -92,6 +97,7 @@ func RunChatStep(
 		return nil, nil, nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	log.Printf("[openaichat] response status: %d\n", resp.StatusCode)
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -329,8 +335,11 @@ func processChatStream(
 	}
 	_ = sseHandler.AiMsgStartStep()
 
+	lastChunkTime := time.Now()
+	chunkCount := 0
 	for {
 		if err := ctx.Err(); err != nil {
+			log.Printf("[openaichat] context cancelled after %d chunks, last chunk %dms ago\n", chunkCount, time.Since(lastChunkTime).Milliseconds())
 			_ = sseHandler.AiMsgError("request cancelled")
 			return &uctypes.WaveStopReason{
 				Kind:      uctypes.StopKindCanceled,
@@ -340,8 +349,12 @@ func processChatStream(
 		}
 
 		event, err := decoder.Decode()
+		chunkCount++
+		silenceMs := time.Since(lastChunkTime).Milliseconds()
+		lastChunkTime = time.Now()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
+				log.Printf("[openaichat] stream EOF after %d chunks (silence: %dms)\n", chunkCount, silenceMs)
 				break
 			}
 			if sseHandler.Err() != nil {
@@ -362,6 +375,7 @@ func processChatStream(
 
 		data := event.Data()
 		if data == "[DONE]" {
+			log.Printf("[openaichat] stream [DONE] after %d chunks (silence: %dms)\n", chunkCount, silenceMs)
 			break
 		}
 
@@ -412,8 +426,11 @@ func processChatStream(
 
 		if choice.FinishReason != nil && *choice.FinishReason != "" {
 			finishReason = *choice.FinishReason
+			log.Printf("[openaichat] stream finish_reason=%q at chunk %d\n", finishReason, chunkCount)
 		}
 	}
+	log.Printf("[openaichat] stream ended: %d chunks, finish_reason=%q, tool_calls=%d, content_len=%d\n",
+		chunkCount, finishReason, len(toolCallsInProgress), parser.contentBuilder.Len())
 
 	stopKind := uctypes.StopKindDone
 	if finishReason == "length" {
