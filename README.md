@@ -129,18 +129,25 @@ task dev
 
 ### Set up an AI model (required)
 
-After launching Wove, **right-click the AI panel** and choose **Quick Add Model**:
+Wove needs an AI model to work. The fastest way to get started:
+
+1. Open Wove and find the **AI panel** on the right side (or press `Alt+Shift+A`)
+2. **Right-click** anywhere in the AI panel to open the context menu
+3. Go to **Quick Add Model** and pick your provider
+4. Paste your API key when prompted — done
 
 | Provider | What you need | Get API key at |
 |----------|--------------|----------------|
 | **Claude (Anthropic)** | API key | [console.anthropic.com](https://console.anthropic.com/) |
 | **GPT-5 (OpenAI)** | API key | [platform.openai.com](https://platform.openai.com/) |
-| **Gemini (Google)** | API key | [aistudio.google.com](https://aistudio.google.com/) |
+| **Gemini (Google)** | API key (free tier available) | [aistudio.google.com](https://aistudio.google.com/) |
 | **MiniMax** | API key | [platform.minimaxi.com](https://platform.minimaxi.com/) |
-| **OpenRouter** | API key | [openrouter.ai](https://openrouter.ai/) |
-| **Ollama (Local)** | Ollama running locally | [ollama.com](https://ollama.com/) |
+| **OpenRouter** | API key (access any model) | [openrouter.ai](https://openrouter.ai/) |
+| **Ollama (Local)** | Ollama running (`ollama serve`) | [ollama.com](https://ollama.com/) |
 
-Select a provider, paste your API key, and you're ready to go. No config files needed.
+API keys are stored securely in an encrypted local keystore — never in config files or plain text.
+
+**Recommended for coding:** Claude Sonnet 4.6 or GPT-5.1 with tool support enabled.
 
 ### Advanced: manual model configuration
 
