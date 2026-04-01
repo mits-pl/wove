@@ -87,6 +87,16 @@ func parseWriteTextFileInput(input any) (*writeTextFileParams, error) {
 		return nil, fmt.Errorf("input is required")
 	}
 
+	// Normalize common alias field names
+	if inputMap, ok := input.(map[string]any); ok {
+		for _, alias := range []string{"file", "path", "file_path", "filepath"} {
+			if val, ok := inputMap[alias].(string); ok && val != "" {
+				inputMap["filename"] = val
+				break
+			}
+		}
+	}
+
 	if err := utilfn.ReUnmarshal(result, input); err != nil {
 		return nil, fmt.Errorf("invalid input format: %w", err)
 	}
@@ -303,6 +313,16 @@ func parseEditTextFileInput(input any) (*editTextFileParams, error) {
 
 	if input == nil {
 		return nil, fmt.Errorf("input is required")
+	}
+
+	// Normalize common alias field names
+	if inputMap, ok := input.(map[string]any); ok {
+		for _, alias := range []string{"file", "path", "file_path", "filepath"} {
+			if val, ok := inputMap[alias].(string); ok && val != "" {
+				inputMap["filename"] = val
+				break
+			}
+		}
 	}
 
 	if err := utilfn.ReUnmarshal(result, input); err != nil {

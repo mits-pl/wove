@@ -29,6 +29,10 @@ type readTextFileParams struct {
 	MaxBytes *int    `json:"max_bytes"`
 }
 
+// lastReadFilename tracks the most recently read file path per session.
+// Used as fallback when LLMs omit the filename in follow-up read calls (e.g. offset-only reads).
+var lastReadFilename string
+
 func parseReadTextFileInput(input any) (*readTextFileParams, error) {
 	result := &readTextFileParams{}
 
@@ -36,13 +40,31 @@ func parseReadTextFileInput(input any) (*readTextFileParams, error) {
 		return nil, fmt.Errorf("input is required")
 	}
 
+	// Normalize common alias field names that LLMs may use instead of "filename"
+	if inputMap, ok := input.(map[string]any); ok {
+		for _, alias := range []string{"file", "path", "file_path", "filepath"} {
+			if val, ok := inputMap[alias].(string); ok && val != "" {
+				inputMap["filename"] = val
+				break
+			}
+		}
+	}
+
 	if err := utilfn.ReUnmarshal(result, input); err != nil {
 		return nil, fmt.Errorf("invalid input format: %w", err)
+	}
+
+	// Fallback: if filename is missing but we have offset/count, assume continuation of last read file
+	if result.Filename == "" && lastReadFilename != "" {
+		result.Filename = lastReadFilename
 	}
 
 	if result.Filename == "" {
 		return nil, fmt.Errorf("missing filename parameter")
 	}
+
+	// Track for future fallback
+	lastReadFilename = result.Filename
 
 	if result.Origin == nil {
 		origin := "start"
