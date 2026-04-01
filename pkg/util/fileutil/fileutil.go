@@ -275,30 +275,45 @@ func findNormalizedMatch(content []byte, oldStr string) (int, int, bool) {
 
 	contentStr := string(content)
 	contentLines := strings.Split(contentStr, "\n")
-
-	// Build a sliding window over lines to find the normalized match.
-	// The old_str typically spans a range of lines.
 	oldLines := strings.Split(oldStr, "\n")
 	numOldLines := len(oldLines)
 
 	var matches []struct{ start, end int }
 
-	for i := 0; i <= len(contentLines)-numOldLines; i++ {
-		candidate := strings.Join(contentLines[i:i+numOldLines], "\n")
-		if normalizeWhitespace(candidate) == normalizedOld {
-			// Calculate byte offset
-			byteStart := 0
-			for j := 0; j < i; j++ {
-				byteStart += len(contentLines[j]) + 1 // +1 for \n
+	// Try exact line count first, then flex ±2 lines to handle AI adding/removing blank lines
+	for flex := 0; flex <= 2; flex++ {
+		for delta := -flex; delta <= flex; delta++ {
+			windowSize := numOldLines + delta
+			if windowSize < 1 || windowSize > len(contentLines) {
+				continue
 			}
-			byteEnd := byteStart
-			for j := i; j < i+numOldLines; j++ {
-				byteEnd += len(contentLines[j])
-				if j < i+numOldLines-1 {
-					byteEnd += 1 // +1 for \n
+			for i := 0; i <= len(contentLines)-windowSize; i++ {
+				candidate := strings.Join(contentLines[i:i+windowSize], "\n")
+				if normalizeWhitespace(candidate) == normalizedOld {
+					byteStart := 0
+					for j := 0; j < i; j++ {
+						byteStart += len(contentLines[j]) + 1
+					}
+					byteEnd := byteStart
+					for j := i; j < i+windowSize; j++ {
+						byteEnd += len(contentLines[j])
+						if j < i+windowSize-1 {
+							byteEnd += 1
+						}
+					}
+					matches = append(matches, struct{ start, end int }{byteStart, byteEnd})
 				}
 			}
-			matches = append(matches, struct{ start, end int }{byteStart, byteEnd})
+			if len(matches) == 1 {
+				m := matches[0]
+				return m.start, m.end - m.start, true
+			}
+			if len(matches) > 1 {
+				matches = nil // ambiguous, try next flex
+			}
+		}
+		if len(matches) == 1 {
+			break
 		}
 	}
 
