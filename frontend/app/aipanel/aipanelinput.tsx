@@ -253,7 +253,7 @@ export const AIPanelInput = memo(({ onSubmit, status, model }: AIPanelInputProps
                             <i className="fa fa-paperclip text-sm"></i>
                         </button>
                     </Tooltip>
-                    {status === "streaming" ? (
+                    {status === "streaming" || status === "submitted" ? (
                         <Tooltip content="Stop Response" placement="top" divClassName="absolute bottom-1.5 right-1">
                             <button
                                 type="button"

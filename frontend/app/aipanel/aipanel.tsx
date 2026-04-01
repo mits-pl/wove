@@ -344,6 +344,19 @@ const AIPanelComponentInner = memo(({ roundTopLeft }: AIPanelComponentInnerProps
         globalStore.set(model.isAIStreaming, status === "streaming" || status === "submitted");
     }, [status]);
 
+    // Watchdog: if status is stuck on "streaming" or "submitted" for >120s, force stop and show error
+    useEffect(() => {
+        if (status !== "streaming" && status !== "submitted") {
+            return;
+        }
+        const watchdogTimer = setTimeout(() => {
+            console.warn("[aipanel] watchdog: AI response timed out after 120s, forcing stop");
+            stop();
+            model.setError("AI response timed out. The model may be overloaded or the request was too large. Try again or switch to a different model.");
+        }, 120_000);
+        return () => clearTimeout(watchdogTimer);
+    }, [status, messages.length]);
+
     useEffect(() => {
         const keyHandler = keydownWrapper(handleKeyDown);
         document.addEventListener("keydown", keyHandler);
