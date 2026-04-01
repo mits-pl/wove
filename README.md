@@ -149,6 +149,8 @@ API keys are stored securely in an encrypted local keystore — never in config 
 
 **Recommended for coding:** Claude Sonnet 4.6 or GPT-5.1 with tool support enabled.
 
+You can also click **Configure Modes** in the same context menu to open the JSON editor and add or modify models directly.
+
 ### Advanced: manual model configuration
 
 For custom endpoints or models not in Quick Add, create `~/.config/woveterm/waveai.json`:
