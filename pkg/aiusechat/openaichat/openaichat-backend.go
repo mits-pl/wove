@@ -92,9 +92,25 @@ func RunChatStep(
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	resp, err := client.Do(req)
+	// Retry once on connection failure (MiniMax drops connections under load)
+	var resp *http.Response
+	for attempt := 0; attempt < 2; attempt++ {
+		resp, err = client.Do(req)
+		if err == nil {
+			break
+		}
+		if attempt == 0 {
+			log.Printf("[openaichat] request failed (attempt 1), retrying in 2s: %v\n", err)
+			time.Sleep(2 * time.Second)
+			// Rebuild request (body was consumed)
+			req, err = buildChatHTTPRequest(ctx, messages, chatOpts)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+		}
+	}
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("request failed: %w", err)
+		return nil, nil, nil, fmt.Errorf("request failed after retry: %w", err)
 	}
 	defer resp.Body.Close()
 	log.Printf("[openaichat] response status: %d\n", resp.StatusCode)
