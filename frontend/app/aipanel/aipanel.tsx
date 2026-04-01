@@ -344,19 +344,24 @@ const AIPanelComponentInner = memo(({ roundTopLeft }: AIPanelComponentInnerProps
         globalStore.set(model.isAIStreaming, status === "streaming" || status === "submitted");
     }, [status]);
 
-    // Watchdog: if status is stuck on "streaming" or "submitted" for >200s, force stop and show error
-    // Must be longer than backend timeout (180s) to avoid killing requests that backend would handle
+    // Watchdog: reset on ANY change in messages (new parts, tool results, text chunks).
+    // Uses JSON.stringify of last message's parts count as a proxy for "activity happened".
+    // Only fires after 200s of ZERO frontend activity (not 200s total session time).
+    const lastMessagePartsCount = messages.length > 0
+        ? (messages[messages.length - 1]?.parts?.length ?? 0)
+        : 0;
+    const watchdogKey = `${status}-${messages.length}-${lastMessagePartsCount}`;
     useEffect(() => {
         if (status !== "streaming" && status !== "submitted") {
             return;
         }
         const watchdogTimer = setTimeout(() => {
-            console.warn("[aipanel] watchdog: AI response timed out after 200s, forcing stop");
+            console.warn("[aipanel] watchdog: no activity for 200s, forcing stop");
             stop();
-            model.setError("AI response timed out after 200s. The model may be overloaded or the request was too large. Try again or switch to a different model.");
+            model.setError("AI response timed out — no activity for 200s. Try again or switch to a different model.");
         }, 200_000);
         return () => clearTimeout(watchdogTimer);
-    }, [status, messages.length]);
+    }, [watchdogKey]);
 
     useEffect(() => {
         const keyHandler = keydownWrapper(handleKeyDown);
