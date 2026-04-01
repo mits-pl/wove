@@ -248,9 +248,10 @@ const (
 )
 
 type EditSpec struct {
-	OldStr string `json:"old_str"`
-	NewStr string `json:"new_str"`
-	Desc   string `json:"desc,omitempty"`
+	OldStr     string `json:"old_str"`
+	NewStr     string `json:"new_str"`
+	Desc       string `json:"desc,omitempty"`
+	ReplaceAll bool   `json:"replace_all,omitempty"` // replace all occurrences (like Claude Code's replace_all flag)
 }
 
 type EditResult struct {
@@ -267,6 +268,16 @@ func normalizeWhitespace(s string) string {
 
 // findNormalizedMatch finds the position and length of old_str in content using whitespace-normalized matching.
 // Returns (start, length, found). The returned start/length refer to the original content bytes.
+// stripTrailingLineWhitespace removes trailing spaces/tabs from each line.
+// Inspired by Claude Code's trailing whitespace handling.
+func stripTrailingLineWhitespace(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimRight(line, " \t")
+	}
+	return strings.Join(lines, "\n")
+}
+
 func findNormalizedMatch(content []byte, oldStr string) (int, int, bool) {
 	normalizedOld := normalizeWhitespace(oldStr)
 	if normalizedOld == "" {
@@ -416,8 +427,22 @@ func applyEdit(content []byte, edit EditSpec, index int) ([]byte, EditResult) {
 		return content, result
 	}
 
-	oldBytes := []byte(edit.OldStr)
+	// Strip trailing whitespace from each line of old_str (like Claude Code)
+	// This catches mismatches caused by trailing spaces in AI-generated old_str
+	oldStr := stripTrailingLineWhitespace(edit.OldStr)
+	oldBytes := []byte(oldStr)
+
+	// Also try matching against content with stripped trailing whitespace
+	strippedContent := []byte(stripTrailingLineWhitespace(string(content)))
 	count := bytes.Count(content, oldBytes)
+	if count == 0 {
+		// Try with both sides stripped
+		count = bytes.Count(strippedContent, oldBytes)
+		if count > 0 {
+			// Match found in stripped version — use stripped content for replacement
+			content = strippedContent
+		}
+	}
 
 	// Exact match found
 	if count == 1 {
@@ -427,10 +452,15 @@ func applyEdit(content []byte, edit EditSpec, index int) ([]byte, EditResult) {
 	}
 
 	if count > 1 {
+		if edit.ReplaceAll {
+			// Replace all occurrences
+			modifiedContent := bytes.ReplaceAll(content, oldBytes, []byte(edit.NewStr))
+			result.Applied = true
+			return modifiedContent, result
+		}
 		result.Applied = false
-		// Find line numbers of all occurrences to help AI provide more context
 		lineNums := findOccurrenceLines(content, oldBytes)
-		result.Error = fmt.Sprintf("old_str appears %d times (at lines %s), must appear exactly once. Include more surrounding context in old_str to make it unique.", count, formatLineNumbers(lineNums))
+		result.Error = fmt.Sprintf("old_str appears %d times (at lines %s). Use replace_all=true to replace all, or include more context to make old_str unique.", count, formatLineNumbers(lineNums))
 		return content, result
 	}
 

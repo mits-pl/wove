@@ -487,18 +487,23 @@ func GetEditTextFileToolDefinition() uctypes.ToolDefinition {
 						"properties": map[string]any{
 							"old_str": map[string]any{
 								"type":        "string",
-								"description": "The exact string to find and replace. MUST appear exactly once in the file - if it appears zero times or multiple times, the entire edit operation will fail.",
+								"description": "The exact string to find and replace. Must appear exactly once unless replace_all is true.",
 							},
 							"new_str": map[string]any{
 								"type":        "string",
 								"description": "The string to replace with",
+							},
+							"replace_all": map[string]any{
+								"type":        "boolean",
+								"default":     false,
+								"description": "If true, replace ALL occurrences of old_str. Use for global changes like renaming a CSS class or color value.",
 							},
 							"desc": map[string]any{
 								"type":        "string",
 								"description": "Description of what this edit does (keep it VERY short, one sentence max)",
 							},
 						},
-						"required":             []string{"old_str", "new_str", "desc"},
+						"required":             []string{"old_str", "new_str", "replace_all", "desc"},
 						"additionalProperties": false,
 					},
 				},
