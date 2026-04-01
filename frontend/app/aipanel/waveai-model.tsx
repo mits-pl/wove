@@ -475,11 +475,16 @@ export class WaveAIModel {
         if (!this.isValidMode(mode)) {
             this.setAIModeToDefault();
         } else {
+            const previousMode = globalStore.get(this.currentAIMode);
             globalStore.set(this.currentAIMode, mode);
             RpcApi.SetRTInfoCommand(TabRpcClient, {
                 oref: this.orefContext,
                 data: { "waveai:mode": mode },
             });
+            // Clear chat when switching models to avoid incompatible message formats
+            if (previousMode && previousMode !== mode) {
+                this.clearChat();
+            }
         }
     }
 
