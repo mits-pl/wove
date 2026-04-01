@@ -56,7 +56,8 @@ IMPORTANT: You can omit widget_id in term_run_command — it will auto-select an
 
 	// Web search — always use the webview widget
 	`## Web Browsing
-When you need to search the internet or look up information online, ALWAYS use the web_open or web_navigate tools to open pages in the webview widget. This lets the user see what you are browsing in real time. Use web_read_text or web_capture to extract content from the page. Do NOT rely on built-in/native web search — always browse through the webview so the user can follow along.`,
+When you need to search the internet or look up information online, ALWAYS use the web_open or web_navigate tools to open pages in the webview widget. This lets the user see what you are browsing in real time. Use web_read_text or web_capture to extract content from the page. Do NOT rely on built-in/native web search — always browse through the webview so the user can follow along.
+IMPORTANT: Only open ONE web browser widget at a time. If you need to visit multiple URLs, use web_navigate to switch the existing widget to a new URL — do NOT open multiple web_open calls in parallel. Open a second browser only if the user explicitly needs two pages visible side by side.`,
 
 	// Web interaction — use web_capture before clicking
 	`## Web Interaction

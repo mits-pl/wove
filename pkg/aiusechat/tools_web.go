@@ -659,7 +659,7 @@ func GetWebOpenToolDefinition(tabId string, ownedWidgets ...*uctypes.OwnedWidget
 	return uctypes.ToolDefinition{
 		Name:             "web_open",
 		DisplayName:      "Open Web Browser Widget",
-		Description:      "Open a new web browser widget with the given URL. Use this when no web widget is open yet, or when you need a separate browser window for a different page.",
+		Description:      "Open a new web browser widget with the given URL. Only open ONE browser at a time — if you need to visit multiple pages, use web_navigate to switch URLs in the existing widget. Only call web_open again if you genuinely need two pages visible side by side.",
 		ShortDescription: "Open new web browser widget",
 		ToolLogName:      "web:open",
 		Strict:           true,
