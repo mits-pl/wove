@@ -353,11 +353,7 @@ func GetReadTextFileToolDefinition() uctypes.ToolDefinition {
 	return uctypes.ToolDefinition{
 		Name:        "read_text_file",
 		DisplayName: "Read Text File",
-		Description: `Read a text file. Supports line ranges and tail. Rejects binary.
-Rules:
-- You MUST read the ENTIRE file before editing it — not just the area you plan to change. Understanding the full context prevents breaking imports, dependencies, or patterns elsewhere in the file.
-- Use offset/count only for very large files (500+ lines) where reading everything would waste context.
-- Reading a file is mandatory before any write_text_file (overwrite) or edit_text_file operation.`,
+		Description: "Read a text file. Supports line ranges (offset/count) and tail (origin=end). Rejects binary. You MUST read the ENTIRE file before editing — not just the area you plan to change. Reading is mandatory before write_text_file or edit_text_file.",
 		ToolLogName: "gen:readfile",
 		Strict:      false,
 		InputSchema: map[string]any{

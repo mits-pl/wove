@@ -255,11 +255,7 @@ func GetWriteTextFileToolDefinition() uctypes.ToolDefinition {
 	return uctypes.ToolDefinition{
 		Name:        "write_text_file",
 		DisplayName: "Write Text File",
-		Description: `Create a new file or overwrite an existing one. Max 100KB.
-Rules:
-- For EXISTING files: you MUST read_text_file first — this tool will fail if you haven't. Prefer edit_text_file for small changes instead of rewriting the whole file.
-- For NEW files: find and read a similar file in the same directory first to match the project's style, naming, and patterns.
-- Do NOT create files unless absolutely necessary. Prefer editing existing files over creating new ones to avoid file bloat.`,
+		Description: "Create or overwrite a text file. Max 100KB. For existing files: MUST read_text_file first (will fail otherwise). Prefer edit_text_file for small changes. For new files: read a sibling file first to match project style.",
 		ToolLogName: "gen:writefile",
 		Strict:      true,
 		InputSchema: map[string]any{
@@ -473,14 +469,7 @@ func GetEditTextFileToolDefinition() uctypes.ToolDefinition {
 	return uctypes.ToolDefinition{
 		Name:        "edit_text_file",
 		DisplayName: "Edit Text File",
-		Description: `Edit an existing file via search-and-replace. You MUST read_text_file first — this tool will fail if you haven't.
-Rules:
-- Each old_str must match EXACTLY once in the file (including whitespace and indentation). If it matches 0 or 2+ times, the entire operation fails.
-- Include just enough surrounding context in old_str to make it unique (usually 2-4 lines). Don't include the entire file.
-- Preserve the exact indentation of the original code in both old_str and new_str.
-- Prefer multiple small, targeted edits over one large replacement.
-- All edits are atomic: if any single edit fails, none are applied.
-- Max file size: 100KB.`,
+		Description: "Edit file via search-and-replace. MUST read_text_file first (will fail otherwise). Each old_str must match exactly once — use 2-4 lines of context for uniqueness. Preserve indentation. Atomic: all succeed or none apply. Max 100KB.",
 		ToolLogName: "gen:editfile",
 		Strict:      true,
 		InputSchema: map[string]any{

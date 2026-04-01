@@ -219,7 +219,7 @@ func GetTermRunCommandToolDefinition(tabId string, ownedWidgets ...*uctypes.Owne
 	return uctypes.ToolDefinition{
 		Name:        "term_run_command",
 		DisplayName: "Run Terminal Command",
-		Description: "Run a command in terminal and wait for it to finish, then return output. For short-lived CLI tools (git, npm, artisan, ls, grep, etc.). Has a 60-second timeout. Do NOT use for interactive or long-running programs (claude, vim, nano, top, htop, ssh, node/python REPLs, docker attach, etc.) - use term_send_input instead for those. If widget_id is omitted, auto-selects an existing ready terminal or creates a new one.",
+		Description: "Run a short-lived command in terminal and return output. 60s timeout. For interactive/long-running programs use term_send_input. Auto-selects terminal if widget_id omitted.",
 		ToolLogName: "term:runcommand",
 		InputSchema: map[string]any{
 			"type": "object",

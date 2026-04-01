@@ -330,7 +330,7 @@ func GetWebExecJsToolDefinition(tabId string) uctypes.ToolDefinition {
 	return uctypes.ToolDefinition{
 		Name:             "web_exec_js",
 		DisplayName:      "Execute JavaScript",
-		Description:      "Execute arbitrary JavaScript code in the web widget's page context, like a browser DevTools console. The code runs via a function body — use 'return' to send back a result. For example: 'return document.title' or 'return document.querySelectorAll(\"a\").length'. Does NOT reload the page, so it preserves current page state (form values, scroll position, etc.).",
+		Description:      "Execute JavaScript in web widget. Use 'return' for results. Preserves page state.",
 		ShortDescription: "Execute JS in web widget",
 		ToolLogName:      "web:execjs",
 		Strict:           true,
@@ -456,7 +456,7 @@ func GetWebClickToolDefinition(tabId string) uctypes.ToolDefinition {
 	return uctypes.ToolDefinition{
 		Name:             "web_click",
 		DisplayName:      "Click Web Element",
-		Description:      "Click an element on the web page by CSS selector. For links (<a> tags), navigates to the href URL. For other elements, triggers a click event.",
+		Description:      "Click element by CSS selector. Links navigate to href, others trigger click event.",
 		ShortDescription: "Click element in web widget",
 		ToolLogName:      "web:click",
 		Strict:           true,
@@ -590,7 +590,7 @@ func GetWebMouseClickToolDefinition(tabId string) uctypes.ToolDefinition {
 	return uctypes.ToolDefinition{
 		Name:             "web_mouse_click",
 		DisplayName:      "Mouse Click Web Element",
-		Description:      "Perform a native mouse click on a web page element. Unlike web_click which uses JavaScript click(), this dispatches a real mouse event that works with iframes (e.g. reCAPTCHA), embedded widgets, and elements that ignore synthetic clicks. You can click by CSS selector OR by x,y coordinates. Use coordinates when the target is inside an iframe.",
+		Description:      "Native mouse click (CDP). Works with iframes, reCAPTCHA, embedded widgets. Click by CSS selector or x,y coordinates.",
 		ShortDescription: "Native mouse click in web widget",
 		ToolLogName:      "web:mouseclick",
 		Strict:           false,
@@ -725,7 +725,7 @@ func GetWebTypeInputToolDefinition(tabId string) uctypes.ToolDefinition {
 	return uctypes.ToolDefinition{
 		Name:             "web_type_input",
 		DisplayName:      "Type Text Into Web Input",
-		Description:      "Type text into an input field, textarea, or contenteditable element on the web page. Focuses the element, clears its current value, and types the new text. Dispatches input and change events so frameworks detect the change.",
+		Description:      "Type text into input/textarea/contenteditable. Clears field first, dispatches input+change events.",
 		ShortDescription: "Type text into web input",
 		ToolLogName:      "web:typeinput",
 		Strict:           true,
@@ -826,7 +826,7 @@ func GetWebPressKeyToolDefinition(tabId string) uctypes.ToolDefinition {
 	return uctypes.ToolDefinition{
 		Name:             "web_press_key",
 		DisplayName:      "Press Key in Web Widget",
-		Description:      "Simulate a key press on the web page. Dispatches keydown, keypress, and keyup events on the focused element (or a specific element if selector is provided). Common keys: 'Enter', 'Tab', 'Escape', 'ArrowDown', 'ArrowUp', 'Backspace', 'Delete', or any single character.",
+		Description:      "Simulate key press (keydown/keypress/keyup). Common: Enter, Tab, Escape, ArrowDown, Backspace, or any character.",
 		ShortDescription: "Press key in web widget",
 		ToolLogName:      "web:presskey",
 		Strict:           true,
@@ -925,7 +925,7 @@ func GetWebGetConsoleToolDefinition(tabId string) uctypes.ToolDefinition {
 	return uctypes.ToolDefinition{
 		Name:             "web_get_console",
 		DisplayName:      "Get Browser Console",
-		Description:      "Read browser console output (console.log, console.warn, console.error) from the web widget. Returns recent console entries with level, message, and timestamp. Useful for debugging errors, checking API responses, and understanding application state.",
+		Description:      "Read browser console output (log/warn/error). Returns recent entries with level, message, timestamp.",
 		ShortDescription: "Read browser console logs",
 		ToolLogName:      "web:getconsole",
 		Strict:           true,
@@ -1039,7 +1039,7 @@ func GetWebInspectVueToolDefinition(tabId string) uctypes.ToolDefinition {
 	return uctypes.ToolDefinition{
 		Name:             "web_inspect_vue",
 		DisplayName:      "Inspect Vue/Inertia Page",
-		Description:      "Inspect the current web page for Vue.js component hierarchy and Inertia.js page data. Returns the Vue component chain for a given CSS selector (default: body), Inertia page component name, props keys, and Vue version. Useful for understanding frontend structure of Laravel/Inertia/Vue applications.",
+		Description:      "Inspect Vue.js components and Inertia.js page data. Returns component chain, page props, Vue version.",
 		ShortDescription: "Inspect Vue/Inertia in web widget",
 		ToolLogName:      "web:inspectvue",
 		Strict:           true,

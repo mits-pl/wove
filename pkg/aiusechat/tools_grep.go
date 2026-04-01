@@ -52,7 +52,7 @@ func GetGrepToolDefinition() uctypes.ToolDefinition {
 	return uctypes.ToolDefinition{
 		Name:        "grep",
 		DisplayName: "Grep Search",
-		Description: "Search file contents using grep. Runs silently in the background without using a terminal. Use this instead of running grep via term_run_command. Supports recursive search, file type filtering, and regex patterns.",
+		Description: "Search file contents (recursive grep). Runs silently, not in terminal. Supports regex and file type filtering.",
 		ToolLogName: "gen:grep",
 		Strict:      false,
 		InputSchema: map[string]any{
