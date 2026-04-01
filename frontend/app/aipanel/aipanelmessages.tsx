@@ -93,7 +93,7 @@ export const AIPanelMessages = memo(({ messages, status, onContextMenu }: AIPane
                 return <AIMessage key={message.id} message={message} isStreaming={isStreaming} />;
             })}
 
-            {status === "streaming" &&
+            {(status === "streaming" || status === "submitted") &&
                 (messages.length === 0 || messages[messages.length - 1].role !== "assistant") && (
                     <AIMessage
                         key="last-message"

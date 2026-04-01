@@ -7,7 +7,7 @@ import { RpcApi } from "@/app/store/wshclientapi";
 import { TabRpcClient } from "@/app/store/wshrpcutil";
 import * as WOS from "@/app/store/wos";
 import { cn, stringToBase64 } from "@/util/util";
-import { memo, useCallback, useEffect, useRef } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { getFileIcon } from "./ai-utils";
 import { AIFeedbackButtons } from "./aifeedbackbuttons";
 import { AIToolUseGroup } from "./aitooluse";
@@ -25,6 +25,15 @@ const AIThinking = memo(
         isWaitingApproval?: boolean;
     }) => {
         const scrollRef = useRef<HTMLDivElement>(null);
+        const [elapsed, setElapsed] = useState(0);
+
+        useEffect(() => {
+            const startTime = Date.now();
+            const timer = setInterval(() => {
+                setElapsed(Math.floor((Date.now() - startTime) / 1000));
+            }, 1000);
+            return () => clearInterval(timer);
+        }, [message]);
 
         useEffect(() => {
             if (scrollRef.current && reasoningText) {
@@ -39,6 +48,8 @@ const AIThinking = memo(
               })()
             : "";
 
+        const timeStr = elapsed > 0 ? ` (${elapsed}s)` : "";
+
         return (
             <div className="flex flex-col gap-1">
                 <div className="flex items-center gap-2">
@@ -51,7 +62,7 @@ const AIThinking = memo(
                             <i className="fa fa-circle text-[10px]"></i>
                         </div>
                     )}
-                    {message && <span className="text-sm text-gray-400">{message}</span>}
+                    {message && <span className="text-sm text-gray-400">{message}{timeStr}</span>}
                 </div>
                 <div ref={scrollRef} className="text-sm text-gray-500 overflow-y-auto h-[3lh] max-w-[600px] pl-9">
                     {displayText}
