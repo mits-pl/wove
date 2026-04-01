@@ -246,6 +246,7 @@ type UIMessageDataToolUse struct {
 	BlockId             string `json:"blockid,omitempty"`
 	WriteBackupFileName string `json:"writebackupfilename,omitempty"`
 	InputFileName       string `json:"inputfilename,omitempty"`
+	ImageUrl            string `json:"imageurl,omitempty"` // generated image URL (ephemeral, not stored in history)
 }
 
 func (d *UIMessageDataToolUse) IsApproved() bool {

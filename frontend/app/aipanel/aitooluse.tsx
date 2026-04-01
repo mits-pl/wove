@@ -164,14 +164,50 @@ const AIToolUseBatchItem = memo(({ part, effectiveApproval }: AIToolUseBatchItem
               ? "text-error"
               : "text-gray-400";
     const effectiveErrorMessage = part.data.errormessage || (effectiveApproval === "timeout" ? "Not approved" : null);
+    const imageUrl = part.data.imageurl;
+
+    const handleSaveImage = async () => {
+        if (!imageUrl) return;
+        try {
+            const resp = await fetch(imageUrl);
+            const blob = await resp.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `wove-image-${Date.now()}.jpg`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            console.error("Failed to save image:", err);
+        }
+    };
 
     return (
-        <div className="text-sm pl-2 flex items-start gap-1.5">
-            <span className={cn("font-bold flex-shrink-0", statusColor)}>{statusIcon}</span>
-            <div className="flex-1">
-                <span className="text-gray-400">{part.data.tooldesc}</span>
-                {effectiveErrorMessage && <div className="text-red-300 mt-0.5">{effectiveErrorMessage}</div>}
+        <div className="text-sm pl-2 flex flex-col gap-1">
+            <div className="flex items-start gap-1.5">
+                <span className={cn("font-bold flex-shrink-0", statusColor)}>{statusIcon}</span>
+                <div className="flex-1">
+                    <span className="text-gray-400">{part.data.tooldesc}</span>
+                    {effectiveErrorMessage && <div className="text-red-300 mt-0.5">{effectiveErrorMessage}</div>}
+                </div>
             </div>
+            {imageUrl && (
+                <div className="ml-5 mt-1">
+                    <img
+                        src={imageUrl}
+                        alt="Generated image"
+                        className="max-w-full rounded-lg border border-gray-600 max-h-80"
+                        loading="lazy"
+                    />
+                    <button
+                        onClick={handleSaveImage}
+                        className="mt-1.5 px-3 py-1 text-xs border border-gray-600 text-gray-300 hover:border-gray-400 hover:text-white rounded cursor-pointer transition-colors flex items-center gap-1.5"
+                    >
+                        <i className="fa fa-download"></i>
+                        Save Image
+                    </button>
+                </div>
+            )}
         </div>
     );
 });

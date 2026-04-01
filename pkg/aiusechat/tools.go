@@ -229,6 +229,9 @@ func GenerateTabStateAndTools(ctx context.Context, tabid string, widgetAccess bo
 		// repo map tool for structural code exploration
 		tools = append(tools, GetRepoMapToolDefinition())
 
+		// image generation tool (MiniMax image-01)
+		tools = append(tools, GetGenerateImageToolDefinition())
+
 		// Skill invocation tool (only if skills are available)
 		skillTool := GetInvokeSkillToolDefinition(tabid)
 		if skillTool.InputSchema != nil {
