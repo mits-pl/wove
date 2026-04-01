@@ -16,7 +16,7 @@
     "conn:askbeforewshinstall": true,
     "conn:wshenabled": true,
     "editor:minimapenabled": true,
-    "web:defaulturl": "https://github.com/wavetermdev/waveterm",
+    "web:defaulturl": "https://github.com/mits-pl/wove",
     "web:defaultsearch": "https://www.google.com/search?q={query}",
     "window:tilegapsize": 3,
     "window:maxtabcachesize": 10,
