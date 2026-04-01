@@ -180,6 +180,59 @@ func (cs *ChatStore) CompactLargeToolResults(chatId string, sizeThreshold int, m
 	return truncatedCount
 }
 
+// GetTotalContentSize returns the approximate total size of all messages in a conversation.
+func (cs *ChatStore) GetTotalContentSize(chatId string) int {
+	cs.lock.Lock()
+	defer cs.lock.Unlock()
+
+	chat := cs.chats[chatId]
+	if chat == nil {
+		return 0
+	}
+
+	totalSize := 0
+	for _, msg := range chat.NativeMessages {
+		totalSize += msg.GetContentSize()
+	}
+	return totalSize
+}
+
+// CompactConversation aggressively compacts a conversation when total size exceeds maxTotalSize.
+// Strategy: keep the first user message and last keepRecentN messages at full size.
+// Everything in between: tool results truncated to maxToolLen, assistant texts truncated to maxTextLen.
+func (cs *ChatStore) CompactConversation(chatId string, maxTotalSize int, keepRecentN int, maxToolLen int, maxTextLen int) int {
+	cs.lock.Lock()
+	defer cs.lock.Unlock()
+
+	chat := cs.chats[chatId]
+	if chat == nil {
+		return 0
+	}
+
+	// Calculate total size
+	totalSize := 0
+	for _, msg := range chat.NativeMessages {
+		totalSize += msg.GetContentSize()
+	}
+
+	if totalSize <= maxTotalSize {
+		return 0
+	}
+
+	truncatedCount := 0
+	msgCount := len(chat.NativeMessages)
+
+	for i := 1; i < msgCount-keepRecentN; i++ {
+		msg := chat.NativeMessages[i]
+		if msg.IsToolResultMessage() {
+			if msg.CompactToolResult(maxToolLen) {
+				truncatedCount++
+			}
+		}
+	}
+	return truncatedCount
+}
+
 func (cs *ChatStore) RemoveMessage(chatId string, messageId string) bool {
 	cs.lock.Lock()
 	defer cs.lock.Unlock()
