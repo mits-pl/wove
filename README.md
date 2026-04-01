@@ -110,11 +110,15 @@ Agent tracks which terminals and browsers it created. Closes them when done. Can
 ### Session History
 Chat history persists per tab across restarts, with a visual banner showing previous work.
 
-## Installation
+## Getting Started
 
-macOS, Linux, and Windows.
+### Requirements
+- macOS 11+, Windows 10 1809+, or Linux (glibc-2.28+)
+- Node.js 22 LTS
+- Go 1.25+
+- [Task](https://taskfile.dev/) build tool
 
-### Build from source
+### Build and run
 
 ```bash
 git clone https://github.com/mits-pl/wove.git
@@ -123,15 +127,25 @@ task init
 task dev
 ```
 
-### Requirements
-- macOS 11+, Windows 10 1809+, or Linux (glibc-2.28+)
-- Node.js 22 LTS
-- Go 1.25+
+### Set up an AI model (required)
 
-## Configuration
+After launching Wove, **right-click the AI panel** and choose **Quick Add Model**:
 
-### AI Modes
-Configure in `~/.config/woveterm/waveai.json`:
+| Provider | What you need | Get API key at |
+|----------|--------------|----------------|
+| **Claude (Anthropic)** | API key | [console.anthropic.com](https://console.anthropic.com/) |
+| **GPT-5 (OpenAI)** | API key | [platform.openai.com](https://platform.openai.com/) |
+| **Gemini (Google)** | API key | [aistudio.google.com](https://aistudio.google.com/) |
+| **MiniMax** | API key | [platform.minimaxi.com](https://platform.minimaxi.com/) |
+| **OpenRouter** | API key | [openrouter.ai](https://openrouter.ai/) |
+| **Ollama (Local)** | Ollama running locally | [ollama.com](https://ollama.com/) |
+
+Select a provider, paste your API key, and you're ready to go. No config files needed.
+
+### Advanced: manual model configuration
+
+For custom endpoints or models not in Quick Add, create `~/.config/woveterm/waveai.json`:
+
 ```json
 {
   "my-model": {
@@ -144,6 +158,8 @@ Configure in `~/.config/woveterm/waveai.json`:
   }
 }
 ```
+
+Supported `ai:apitype` values: `anthropic-messages`, `openai-responses`, `openai-chat`, `google-gemini`
 
 ### Project Instructions
 Create `WAVE.md` in your project root:

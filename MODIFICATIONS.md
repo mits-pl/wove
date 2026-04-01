@@ -111,6 +111,7 @@ This document lists all modifications and additions made in Wove.
 - 10 built-in BYOK presets with endpoints
 - Secret-based preset filtering (hide unconfigured models)
 - Ollama connectivity check
+- Fix: Quick Add Model secret names now match `waveai.json` preset definitions (underscores, not hyphens)
 
 ## Repo Map (Tree-Sitter)
 - `repomap` package using `gotreesitter` (pure Go, no CGO) for structural codebase awareness

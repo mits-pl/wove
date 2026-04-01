@@ -169,19 +169,19 @@ export async function handleWaveAIContextMenu(e: React.MouseEvent, showCopy: boo
     const quickAddModels: ContextMenuItem[] = [
         {
             label: "Claude (Anthropic)",
-            click: () => activateByokPreset("byok@claude-sonnet", "anthropic-api-key", "Anthropic API Key"),
+            click: () => activateByokPreset("byok@claude-sonnet", "anthropic_api_key", "Anthropic API Key"),
         },
         {
             label: "GPT-5 (OpenAI)",
-            click: () => activateByokPreset("byok@gpt5-mini", "openai-api-key", "OpenAI API Key"),
+            click: () => activateByokPreset("byok@gpt5-mini", "openai_api_key", "OpenAI API Key"),
         },
         {
             label: "Gemini (Google)",
-            click: () => activateByokPreset("byok@gemini-flash", "google-ai-key", "Google AI API Key"),
+            click: () => activateByokPreset("byok@gemini-flash", "google_ai_key", "Google AI API Key"),
         },
         {
             label: "MiniMax",
-            click: () => activateByokPreset("byok@minimax", "minimax-api-key", "MiniMax API Key"),
+            click: () => activateByokPreset("byok@minimax", "minimax_api_key", "MiniMax API Key"),
         },
         {
             label: "Ollama (Local)",
@@ -189,7 +189,7 @@ export async function handleWaveAIContextMenu(e: React.MouseEvent, showCopy: boo
         },
         {
             label: "OpenRouter",
-            click: () => activateByokPreset("byok@openrouter", "openrouter-api-key", "OpenRouter API Key"),
+            click: () => activateByokPreset("byok@openrouter", "openrouter_api_key", "OpenRouter API Key"),
         },
     ];
 
