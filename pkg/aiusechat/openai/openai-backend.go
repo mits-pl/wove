@@ -484,6 +484,58 @@ func RemoveToolUseCall(chatId string, callId string) error {
 	return nil
 }
 
+// stripImagesFromOutput removes base64 images from tool result output to save context.
+// If maxTextLen > 0, also truncates text content. If maxTextLen == 0, only strips images.
+func stripImagesFromOutput(output interface{}, maxTextLen int) interface{} {
+	switch v := output.(type) {
+	case []interface{}:
+		// Array of content parts — filter out images, keep text
+		var textParts []string
+		for _, item := range v {
+			if m, ok := item.(map[string]interface{}); ok {
+				if t, ok := m["type"].(string); ok {
+					if t == "input_image" || t == "image_url" {
+						continue // strip image
+					}
+					if t == "input_text" || t == "text" {
+						if text, ok := m["text"].(string); ok {
+							textParts = append(textParts, text)
+						}
+					}
+				}
+			}
+		}
+		result := strings.Join(textParts, "\n")
+		if maxTextLen > 0 && len(result) > maxTextLen {
+			result = result[:maxTextLen] + fmt.Sprintf("\n[...cleared, was %d chars]", len(result))
+		}
+		return result
+	case []OpenAIMessageContent:
+		// Typed array — filter out images
+		var textParts []string
+		for _, item := range v {
+			if item.Type == "input_image" || item.Type == "image_url" {
+				continue
+			}
+			if item.Text != "" {
+				textParts = append(textParts, item.Text)
+			}
+		}
+		result := strings.Join(textParts, "\n")
+		if maxTextLen > 0 && len(result) > maxTextLen {
+			result = result[:maxTextLen] + fmt.Sprintf("\n[...cleared, was %d chars]", len(result))
+		}
+		return result
+	case string:
+		if maxTextLen > 0 && len(v) > maxTextLen {
+			return v[:maxTextLen] + fmt.Sprintf("\n[...cleared, was %d chars]", len(v))
+		}
+		return v
+	default:
+		return output
+	}
+}
+
 func RunOpenAIChatStep(
 	ctx context.Context,
 	sse *sse.SSEHandlerCh,
@@ -562,16 +614,17 @@ func RunOpenAIChatStep(
 		} else if chatMsg.FunctionCallOutput != nil {
 			toolResultSeen++
 			isOld := toolResultSeen <= (totalToolResults - keepRecentToolResults)
+			compacted := *chatMsg.FunctionCallOutput
+
+			// Strip base64 images from ALL old tool results (screenshots are 50-100KB each)
 			if isOld {
-				// Compact old tool result: send truncated copy to API, keep original in chatstore
-				compacted := *chatMsg.FunctionCallOutput
-				if outputStr, ok := compacted.Output.(string); ok && len(outputStr) > maxOldToolResultLen {
-					compacted.Output = outputStr[:maxOldToolResultLen] + fmt.Sprintf("\n[...cleared, was %d chars]", len(outputStr))
-				}
-				inputs = append(inputs, compacted)
+				compacted.Output = stripImagesFromOutput(compacted.Output, maxOldToolResultLen)
 			} else {
-				inputs = append(inputs, *chatMsg.FunctionCallOutput)
+				// Even for recent results, strip images older than the most recent one
+				compacted.Output = stripImagesFromOutput(compacted.Output, 0)
 			}
+
+			inputs = append(inputs, compacted)
 		}
 		toolResultIdx++
 	}

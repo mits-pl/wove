@@ -489,6 +489,8 @@ func ConvertToolResultsToOpenAIChatMessage(toolResults []uctypes.AIToolResult) (
 			outputData = string(errorBytes)
 		} else if result.ImageUrl != "" && result.Text != "" {
 			// Multi-part result: text + image
+			// Send both to API for current request, but only text persists in history
+			// because CompactImageResults strips base64 from older messages
 			outputData = []OpenAIMessageContent{
 				{
 					Type: "input_text",
@@ -502,7 +504,6 @@ func ConvertToolResultsToOpenAIChatMessage(toolResults []uctypes.AIToolResult) (
 		} else {
 			// Check if text looks like an image data URL
 			if strings.HasPrefix(result.Text, "data:image/") {
-				// Convert to output array with input_image type
 				outputData = []OpenAIMessageContent{
 					{
 						Type:     "input_image",
@@ -510,7 +511,6 @@ func ConvertToolResultsToOpenAIChatMessage(toolResults []uctypes.AIToolResult) (
 					},
 				}
 			} else {
-				// Use text result for success
 				outputData = result.Text
 			}
 		}
