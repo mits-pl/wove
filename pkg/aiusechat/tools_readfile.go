@@ -17,8 +17,8 @@ import (
 	"github.com/woveterm/wove/pkg/wavebase"
 )
 
-const ReadFileDefaultLineCount = 500
-const ReadFileDefaultMaxBytes = 100 * 1024
+const ReadFileDefaultLineCount = 2000
+const ReadFileDefaultMaxBytes = 200 * 1024
 const StopReasonMaxBytes = "max_bytes"
 
 type readTextFileParams struct {
