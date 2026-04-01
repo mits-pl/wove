@@ -14,6 +14,20 @@ Wove is not a terminal with an AI chat. It's an autonomous agent that sees your 
 
 Built on the [Wave Terminal](https://github.com/wavetermdev/waveterm) engine (Go + Electron, Apache 2.0).
 
+## Download
+
+**macOS (Apple Silicon / M1+):**
+[Wove-darwin-arm64-0.2.0.dmg](https://github.com/mits-pl/wove/releases/download/v0.2.0/Wove-darwin-arm64-0.2.0.dmg) ·
+[zip](https://github.com/mits-pl/wove/releases/download/v0.2.0/Wove-darwin-arm64-0.2.0.zip)
+
+**macOS (Intel):**
+[Wove-darwin-x64-0.2.0.dmg](https://github.com/mits-pl/wove/releases/download/v0.2.0/Wove-darwin-x64-0.2.0.dmg) ·
+[zip](https://github.com/mits-pl/wove/releases/download/v0.2.0/Wove-darwin-x64-0.2.0.zip)
+
+> Linux and Windows builds coming soon.
+
+[All releases](https://github.com/mits-pl/wove/releases)
+
 ## What makes Wove different
 
 | Capability | Cursor / Copilot | Claude Code | Wove |

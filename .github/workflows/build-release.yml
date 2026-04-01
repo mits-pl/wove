@@ -1,0 +1,115 @@
+name: Build & Upload Release
+run-name: Build ${{ github.event.inputs.version || github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag (e.g. v0.2.0)"
+        required: true
+      platforms:
+        description: "Platforms to build"
+        required: true
+        default: "linux,macos"
+        type: choice
+        options:
+          - linux
+          - macos
+          - linux,macos
+          - linux,macos,windows
+
+env:
+  GO_VERSION: "1.25.6"
+  NODE_VERSION: 22
+  NODE_OPTIONS: --max-old-space-size=4096
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            arch: x64
+            runner: ubuntu-latest
+          - platform: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          - platform: macos
+            arch: universal
+            runner: macos-latest
+          - platform: windows
+            arch: x64
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    if: contains(github.event.inputs.platforms, matrix.platform)
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.version }}
+
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libarchive-tools libopenjp2-tools rpm squashfs-tools
+          sudo snap install snapcraft --classic
+          sudo snap install lxd
+          sudo lxd init --auto
+          sudo snap refresh
+
+      - name: Install Zig (Linux/Windows)
+        if: matrix.platform != 'macos'
+        uses: mlugg/setup-zig@v2
+
+      - name: Install FPM (Linux/macOS)
+        if: matrix.platform != 'windows'
+        run: sudo gem install fpm
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Force git deps to HTTPS
+        run: |
+          git config --global url.https://github.com/.insteadof ssh://git@github.com/
+          git config --global url.https://github.com/.insteadof git@github.com:
+
+      - uses: nick-fields/retry@v4
+        name: npm ci
+        with:
+          command: npm ci --no-audit --no-fund
+          retry_on: error
+          max_attempts: 3
+          timeout_minutes: 5
+        env:
+          GIT_ASKPASS: "echo"
+          GIT_TERMINAL_PROMPT: "0"
+
+      - name: Install Task
+        uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & package
+        run: task package
+        env:
+          USE_SYSTEM_FPM: true
+          SNAPCRAFT_BUILD_ENVIRONMENT: host
+
+      - name: Upload artifacts to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for file in make/*.{zip,dmg,deb,rpm,snap,AppImage,pacman,exe,msi}; do
+            [ -f "$file" ] && echo "Uploading $file" && gh release upload "${{ github.event.inputs.version }}" "$file" --clobber || true
+          done
+        shell: bash
