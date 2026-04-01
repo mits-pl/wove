@@ -363,11 +363,11 @@ export class ElectronWshClientType extends WshClient {
             // Inject SoM markers before screenshot
             await injectSomMarkers(wc, elements);
 
-            // CDP screenshot - JPEG scaled to 768px width
-            const scale = Math.min(768 / viewport.width, 1);
+            // CDP screenshot - JPEG scaled to 512px width, low quality (LLM needs layout, not text)
+            const scale = Math.min(512 / viewport.width, 1);
             const screenshotResult = await wc.debugger.sendCommand("Page.captureScreenshot", {
                 format: "jpeg",
-                quality: 50,
+                quality: 30,
                 clip: {
                     x: 0,
                     y: 0,
