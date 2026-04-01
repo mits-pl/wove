@@ -252,6 +252,8 @@ type EditSpec struct {
 	NewStr     string `json:"new_str"`
 	Desc       string `json:"desc,omitempty"`
 	ReplaceAll bool   `json:"replace_all,omitempty"` // replace all occurrences (like Claude Code's replace_all flag)
+	StartStr   string `json:"start_str,omitempty"`   // marker mode: replace everything from start_str to end_str (inclusive)
+	EndStr     string `json:"end_str,omitempty"`      // marker mode: must pair with start_str
 }
 
 type EditResult struct {
@@ -421,9 +423,54 @@ func applyEdit(content []byte, edit EditSpec, index int) ([]byte, EditResult) {
 		result.Desc = fmt.Sprintf("Edit %d", index+1)
 	}
 
+	// Marker mode: replace everything between start_str and end_str (inclusive)
+	if edit.StartStr != "" && edit.EndStr != "" {
+		startBytes := []byte(edit.StartStr)
+		endBytes := []byte(edit.EndStr)
+
+		startCount := bytes.Count(content, startBytes)
+		endCount := bytes.Count(content, endBytes)
+
+		if startCount == 0 {
+			result.Applied = false
+			result.Error = "start_str not found in file"
+			return content, result
+		}
+		if startCount > 1 {
+			lineNums := findOccurrenceLines(content, startBytes)
+			result.Applied = false
+			result.Error = fmt.Sprintf("start_str appears %d times (at lines %s), must appear exactly once", startCount, formatLineNumbers(lineNums))
+			return content, result
+		}
+		if endCount == 0 {
+			result.Applied = false
+			result.Error = "end_str not found in file"
+			return content, result
+		}
+
+		startIdx := bytes.Index(content, startBytes)
+		// Find end_str AFTER start_str
+		endSearchStart := startIdx + len(startBytes)
+		endIdx := bytes.Index(content[endSearchStart:], endBytes)
+		if endIdx == -1 {
+			result.Applied = false
+			result.Error = "end_str not found after start_str"
+			return content, result
+		}
+		endIdx += endSearchStart
+
+		// Replace from start of start_str to end of end_str (inclusive)
+		modifiedContent := make([]byte, 0, len(content))
+		modifiedContent = append(modifiedContent, content[:startIdx]...)
+		modifiedContent = append(modifiedContent, []byte(edit.NewStr)...)
+		modifiedContent = append(modifiedContent, content[endIdx+len(endBytes):]...)
+		result.Applied = true
+		return modifiedContent, result
+	}
+
 	if edit.OldStr == "" {
 		result.Applied = false
-		result.Error = "old_str cannot be empty"
+		result.Error = "old_str or start_str+end_str is required"
 		return content, result
 	}
 

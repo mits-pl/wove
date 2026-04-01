@@ -469,9 +469,9 @@ func GetEditTextFileToolDefinition() uctypes.ToolDefinition {
 	return uctypes.ToolDefinition{
 		Name:        "edit_text_file",
 		DisplayName: "Edit Text File",
-		Description: "Edit file via search-and-replace. MUST read_text_file first (will fail otherwise). Each old_str must match exactly once — use 2-4 lines of context for uniqueness. Preserve indentation. Atomic: all succeed or none apply. Max 100KB.",
+		Description: "Edit file via search-and-replace or marker mode. MUST read_text_file first. Two modes: (1) old_str+new_str: match exact string, use replace_all for global changes. (2) start_str+end_str+new_str: replace entire block between markers (inclusive). Atomic. Max 100KB.",
 		ToolLogName: "gen:editfile",
-		Strict:      true,
+		Strict:      false, // false because old_str and start_str/end_str are conditionally required
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -487,23 +487,30 @@ func GetEditTextFileToolDefinition() uctypes.ToolDefinition {
 						"properties": map[string]any{
 							"old_str": map[string]any{
 								"type":        "string",
-								"description": "The exact string to find and replace. Must appear exactly once unless replace_all is true.",
+								"description": "The exact string to find and replace. Required for normal mode.",
 							},
 							"new_str": map[string]any{
 								"type":        "string",
-								"description": "The string to replace with",
+								"description": "The replacement string",
 							},
 							"replace_all": map[string]any{
 								"type":        "boolean",
-								"default":     false,
-								"description": "If true, replace ALL occurrences of old_str. Use for global changes like renaming a CSS class or color value.",
+								"description": "Replace ALL occurrences of old_str. Use for global renames.",
+							},
+							"start_str": map[string]any{
+								"type":        "string",
+								"description": "Marker mode: unique string marking the START of the block to replace (inclusive). Must appear exactly once.",
+							},
+							"end_str": map[string]any{
+								"type":        "string",
+								"description": "Marker mode: unique string marking the END of the block to replace (inclusive). Everything from start_str to end_str is replaced with new_str.",
 							},
 							"desc": map[string]any{
 								"type":        "string",
-								"description": "Description of what this edit does (keep it VERY short, one sentence max)",
+								"description": "Short description of this edit",
 							},
 						},
-						"required":             []string{"old_str", "new_str", "replace_all", "desc"},
+						"required":             []string{"new_str", "desc"},
 						"additionalProperties": false,
 					},
 				},
