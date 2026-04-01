@@ -413,7 +413,9 @@ func applyEdit(content []byte, edit EditSpec, index int) ([]byte, EditResult) {
 
 	if count > 1 {
 		result.Applied = false
-		result.Error = fmt.Sprintf("old_str appears %d times, must appear exactly once", count)
+		// Find line numbers of all occurrences to help AI provide more context
+		lineNums := findOccurrenceLines(content, oldBytes)
+		result.Error = fmt.Sprintf("old_str appears %d times (at lines %s), must appear exactly once. Include more surrounding context in old_str to make it unique.", count, formatLineNumbers(lineNums))
 		return content, result
 	}
 
@@ -438,6 +440,32 @@ func applyEdit(content []byte, edit EditSpec, index int) ([]byte, EditResult) {
 		result.Error = "old_str not found in file"
 	}
 	return content, result
+}
+
+// findOccurrenceLines returns the 1-based line numbers where needle appears in content.
+func findOccurrenceLines(content []byte, needle []byte) []int {
+	var lines []int
+	offset := 0
+	for {
+		idx := bytes.Index(content[offset:], needle)
+		if idx == -1 {
+			break
+		}
+		absPos := offset + idx
+		lineNum := 1 + bytes.Count(content[:absPos], []byte("\n"))
+		lines = append(lines, lineNum)
+		offset = absPos + 1
+	}
+	return lines
+}
+
+// formatLineNumbers formats a slice of line numbers as a comma-separated string.
+func formatLineNumbers(lines []int) string {
+	strs := make([]string, len(lines))
+	for i, l := range lines {
+		strs[i] = fmt.Sprintf("%d", l)
+	}
+	return strings.Join(strs, ", ")
 }
 
 // ApplyEdits applies a series of edits to the given content and returns the modified content.
