@@ -60,7 +60,7 @@ func parseTermRunCommandInput(input any) (*TermRunCommandInput, error) {
 	return result, nil
 }
 
-const shellReadyTimeout = 10 * time.Second
+const shellReadyTimeout = 20 * time.Second
 
 // createTerminalWidget creates a new terminal widget in the given tab and waits for shell integration to become ready.
 func createTerminalWidget(tabId string, owned *uctypes.OwnedWidgetSet) (string, error) {
@@ -100,7 +100,8 @@ func createTerminalWidget(tabId string, owned *uctypes.OwnedWidgetSet) (string, 
 	for {
 		select {
 		case <-waitCtx.Done():
-			return fullBlockId, fmt.Errorf("terminal created but shell integration did not become ready within %v", shellReadyTimeout)
+			log.Printf("[term] shell integration not ready after %v, proceeding anyway\n", shellReadyTimeout)
+		return fullBlockId, nil
 		case update := <-watchCh:
 			if update != nil && update.ShellState == "ready" {
 				return fullBlockId, nil
