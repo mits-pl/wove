@@ -94,7 +94,7 @@ func GetGenerateImageToolDefinition() uctypes.ToolDefinition {
 					"description": "Aspect ratio of the generated image",
 				},
 			},
-			"required":             []string{"prompt"},
+			"required":             []string{"prompt", "aspect_ratio"},
 			"additionalProperties": false,
 		},
 		ToolCallDesc: func(input any, output any, toolUseData *uctypes.UIMessageDataToolUse) string {
