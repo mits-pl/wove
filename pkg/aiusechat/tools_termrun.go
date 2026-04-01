@@ -6,6 +6,7 @@ package aiusechat
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
