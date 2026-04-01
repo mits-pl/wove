@@ -93,6 +93,15 @@ Wove enforces multiple layers of code quality to ensure generated code matches y
 - **Sibling references** — when creating new files, an existing file from the same directory is automatically attached as a style reference
 - **Project instructions override** — WAVE.md/CLAUDE.md rules explicitly override the AI's default behavior
 
+### Smart Context Management
+Long coding sessions stay fast — Wove automatically manages the AI's context window:
+
+- **Screenshot stripping** — base64 images shown to the model once, then replaced with text element list in history
+- **Tool result compaction** — old tool outputs are truncated in API requests while chatstore keeps full data for UI
+- **Conversation compaction** — automatic cleanup when context grows too large
+- **Compressed screenshots** — 512px JPEG at quality 30 (~15-25KB instead of 50-80KB)
+- **Model switch protection** — switching models auto-clears chat to prevent format mismatches
+
 ### Widget Ownership & Cleanup
 Agent tracks which terminals and browsers it created. Closes them when done. Cannot close user's pre-existing widgets.
 

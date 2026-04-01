@@ -215,17 +215,44 @@ Systematic improvements to the AI system prompt and tool descriptions to produce
 - Block header CSS wrapping for URL bar in web widgets
 - `web_capture` null safety — skip nodes with missing `nodeName` in CDP snapshots
 
+## Context Management (Claude Code–inspired)
+Intelligent context window management to prevent timeouts and optimize token usage across long sessions.
+
+- **API-level tool result compaction** — old tool results are truncated to 200 chars in the API request copy (chatstore keeps full data for UI/replay). Keeps last 4 results at full size. Mirrors Claude Code's approach.
+- **Screenshot stripping** — base64 images (50-100KB each) are removed from old tool results before sending to API. Model sees the screenshot once, subsequent requests get text element list only.
+- **Screenshot compression** — CDP screenshots reduced from 768px/quality 50 to 512px/quality 30 (~60% smaller base64). LLM needs layout context, not pixel-perfect rendering.
+- **Conversation compaction** — automatic truncation when total conversation content exceeds 30KB. Runs before every API request.
+- **Large result truncation** — any single tool result >5KB is truncated to 2KB regardless of recency.
+- **web_read_text limit** — capped at 15KB per read (was 50KB). Suggests more specific CSS selectors on truncation.
+- **Model switch clears chat** — switching between incompatible models (e.g., GPT-5.1 → MiniMax) auto-clears chat to prevent format mismatches (OpenAI Responses vs Chat Completions format).
+- **LLM parameter normalization** — file tools accept `file`, `path`, `file_path` as aliases for `filename`; `read_text_file` remembers last read file for continuation reads without filename.
+- **Duplicate match diagnostics** — `edit_text_file` shows line numbers when `old_str` matches multiple times.
+
+## UX Improvements
+- **Frontend watchdog** — if AI response hangs for 200s without new data, auto-stop with error message and Retry button.
+- **Stop button** — visible during both "streaming" and "submitted" states (was only "streaming", leaving users stuck).
+- **Elapsed time counter** — thinking indicator shows seconds elapsed: "AI is thinking... (15s)", "Running: reading file (8s)".
+- **Immediate thinking indicator** — shows "AI is thinking..." as soon as request is submitted (was only during streaming, blank gap before first chunk).
+- **Context compaction indicator** — yellow "context compacted" line in chat when old results are cleared, showing count and size.
+- **Single browser rule** — system prompt instructs AI to use one browser at a time (web_navigate to switch URLs, not multiple web_open calls).
+- **Prefer file tools over browser** — system prompt instructs AI to use read_text_file for local files, browser only for external websites.
+
+## Quick Add Model Fix
+- Secret name mismatch fixed: Quick Add Model was saving API keys with hyphens (`minimax-api-key`) but presets expected underscores (`minimax_api_key`). All 5 providers fixed.
+- Default web URL changed from wavetermdev/waveterm to mits-pl/wove.
+
 ## Quality & Reliability
 - Syntax highlighting fix in AI diff viewer (preserved file extensions)
 - Language detection from filename (30+ extensions)
 - New file diff: empty original, green additions
 - Web page title in tab state (catches 500 errors)
-- Default AI timeout: 90 seconds (was infinite)
+- Default AI timeout: 180 seconds (was 90, was infinite before that)
 - Default max output tokens: 16K (was 4K)
 - Friendly error messages with Retry button
 - MCP client: mutex protection, read timeout, graceful shutdown
 - RPC handler input validation for WebSelector opts
 - SSE write deadline reset made non-fatal (httptest compatibility)
+- Compressed tool descriptions (~70% shorter for web tools) to save context tokens
 
 ## Based On
 - [Wave Terminal](https://github.com/wavetermdev/waveterm) by Command Line Inc.
