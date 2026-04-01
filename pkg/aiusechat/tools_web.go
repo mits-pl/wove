@@ -182,9 +182,9 @@ func webReadContent(tabId string, input *webSelectorInput, opts *wshrpc.WebSelec
 	}
 
 	text := strings.Join(results, "\n")
-	const maxLen = 5000
+	const maxLen = 15000
 	if len(text) > maxLen {
-		text = text[:maxLen] + fmt.Sprintf("\n... [truncated, %d chars total. Use a more specific CSS selector to get a smaller section.]", len(text))
+		text = text[:maxLen] + fmt.Sprintf("\n... [truncated, %d chars total. Use a more specific CSS selector to read a smaller section.]", len(text))
 	}
 	return text, nil
 }
