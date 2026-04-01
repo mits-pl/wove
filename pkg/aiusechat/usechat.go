@@ -483,6 +483,11 @@ func RunAIChat(ctx context.Context, sseHandler *sse.SSEHandlerCh, backend UseCha
 			compacted := chatstore.DefaultChatStore.CompactConversation(chatOpts.ChatId, 30000, 4, 1000, 500)
 			if compacted > 0 {
 				log.Printf("[context] compacted %d messages, total was %d bytes\n", compacted, totalSize)
+				// Notify frontend about context compaction
+				_ = sseHandler.AiMsgData("data-compact", "", map[string]any{
+					"compacted_messages": compacted,
+					"total_size_before":  totalSize,
+				})
 			}
 		}
 		if chatOpts.TabStateGenerator != nil {

@@ -184,6 +184,20 @@ const AIMessagePart = memo(({ part, role, isStreaming }: AIMessagePartProps) => 
         }
     }
 
+    if (part.type === "data-compact") {
+        const data = (part as any).data;
+        if (data) {
+            const count = data.compacted_messages ?? 0;
+            const sizeBefore = data.total_size_before ?? 0;
+            return (
+                <div className="text-xs text-yellow-600 mt-1 select-none flex items-center gap-1">
+                    <i className="fa fa-compress text-[10px]"></i>
+                    context compacted: {count} old tool results cleared ({Math.round(sizeBefore / 1024)}KB → lean)
+                </div>
+            );
+        }
+    }
+
     return null;
 });
 
@@ -200,6 +214,7 @@ const isDisplayPart = (part: WaveUIMessagePart): boolean => {
         part.type === "data-tooluse" ||
         part.type === "data-toolprogress" ||
         part.type === "data-usage" ||
+        part.type === "data-compact" ||
         (part.type.startsWith("tool-") && "state" in part && part.state === "input-available")
     );
 };
