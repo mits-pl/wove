@@ -153,6 +153,33 @@ func (cs *ChatStore) CompactOldToolResults(chatId string, keepRecentN int, maxLe
 	return truncatedCount
 }
 
+// CompactLargeToolResults truncates any tool result message exceeding sizeThreshold to maxLen.
+// Unlike CompactOldToolResults, this applies to ALL tool results regardless of recency.
+// Prevents a single large file read (e.g. 34KB HTML) from bloating the entire context.
+func (cs *ChatStore) CompactLargeToolResults(chatId string, sizeThreshold int, maxLen int) int {
+	cs.lock.Lock()
+	defer cs.lock.Unlock()
+
+	chat := cs.chats[chatId]
+	if chat == nil {
+		return 0
+	}
+
+	truncatedCount := 0
+	for i := range chat.NativeMessages {
+		msg := chat.NativeMessages[i]
+		if !msg.IsToolResultMessage() {
+			continue
+		}
+		if msg.GetContentSize() > sizeThreshold {
+			if msg.CompactToolResult(maxLen) {
+				truncatedCount++
+			}
+		}
+	}
+	return truncatedCount
+}
+
 func (cs *ChatStore) RemoveMessage(chatId string, messageId string) bool {
 	cs.lock.Lock()
 	defer cs.lock.Unlock()

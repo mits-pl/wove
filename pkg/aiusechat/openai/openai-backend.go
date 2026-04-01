@@ -150,6 +150,15 @@ func (m *OpenAIChatMessage) IsToolResultMessage() bool {
 	return m.FunctionCallOutput != nil
 }
 
+func (m *OpenAIChatMessage) GetContentSize() int {
+	if m.FunctionCallOutput != nil {
+		if outputStr, ok := m.FunctionCallOutput.Output.(string); ok {
+			return len(outputStr)
+		}
+	}
+	return 0
+}
+
 func (m *OpenAIChatMessage) CompactToolResult(maxLen int) bool {
 	if m.FunctionCallOutput == nil {
 		return false

@@ -194,7 +194,7 @@ func GetGlobalRateLimit() *uctypes.RateLimitInfo {
 	return globalRateLimitInfo
 }
 
-const DefaultAITimeoutMs = 90000 // 90 seconds default timeout for AI requests
+const DefaultAITimeoutMs = 180000 // 180 seconds default timeout for AI requests (increased from 90s for large contexts)
 
 func runAIChatStep(ctx context.Context, sseHandler *sse.SSEHandlerCh, backend UseChatBackend, chatOpts uctypes.WaveChatOpts, cont *uctypes.WaveContinueResponse) (*uctypes.WaveStopReason, []uctypes.GenAIMessage, error) {
 	if chatOpts.Config.APIType == uctypes.APIType_OpenAIResponses && shouldUseChatCompletionsAPI(chatOpts.Config.Model) {
@@ -553,9 +553,11 @@ func RunAIChat(ctx context.Context, sseHandler *sse.SSEHandlerCh, backend UseCha
 		if stopReason != nil && stopReason.Kind == uctypes.StopKindToolUse {
 			metrics.ToolUseCount += len(stopReason.ToolCalls)
 			modifiedExts := processAllToolCalls(backend, stopReason, chatOpts, sseHandler, metrics)
-			// Compact old tool results to prevent context window overflow.
-			// Keep the 6 most recent tool results at full length, truncate older ones to 2000 chars.
-			chatstore.DefaultChatStore.CompactOldToolResults(chatOpts.ChatId, 6, 2000)
+			// Compact tool results to prevent context window overflow.
+			// 1. Truncate ALL oversized tool results (>5KB) to 2KB regardless of recency
+			chatstore.DefaultChatStore.CompactLargeToolResults(chatOpts.ChatId, 5000, 2000)
+			// 2. Keep the 4 most recent tool results at full length, truncate older ones to 2KB
+			chatstore.DefaultChatStore.CompactOldToolResults(chatOpts.ChatId, 4, 2000)
 			// Inject warm context for modified file types (technology-filtered WAVE.md/CLAUDE.md sections)
 			if len(modifiedExts) > 0 {
 				cwd := ""

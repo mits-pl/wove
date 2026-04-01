@@ -255,6 +255,13 @@ func (m *StoredChatMessage) IsToolResultMessage() bool {
 	return m.Message.Role == "tool"
 }
 
+func (m *StoredChatMessage) GetContentSize() int {
+	if m.Message.Role == "tool" {
+		return len(m.Message.Content)
+	}
+	return 0
+}
+
 func (m *StoredChatMessage) CompactToolResult(maxLen int) bool {
 	if m.Message.Role != "tool" {
 		return false

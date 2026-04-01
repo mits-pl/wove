@@ -38,6 +38,20 @@ func (m *GeminiChatMessage) IsToolResultMessage() bool {
 	return false
 }
 
+func (m *GeminiChatMessage) GetContentSize() int {
+	size := 0
+	for _, part := range m.Parts {
+		if part.FunctionResponse != nil && part.FunctionResponse.Response != nil {
+			if result, ok := part.FunctionResponse.Response["result"]; ok {
+				if resultStr, ok := result.(string); ok {
+					size += len(resultStr)
+				}
+			}
+		}
+	}
+	return size
+}
+
 func (m *GeminiChatMessage) CompactToolResult(maxLen int) bool {
 	truncated := false
 	for i, part := range m.Parts {

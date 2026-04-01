@@ -61,6 +61,16 @@ func (m *anthropicChatMessage) IsToolResultMessage() bool {
 	return false
 }
 
+func (m *anthropicChatMessage) GetContentSize() int {
+	size := 0
+	for _, block := range m.Content {
+		if contentStr, ok := block.Content.(string); ok {
+			size += len(contentStr)
+		}
+	}
+	return size
+}
+
 func (m *anthropicChatMessage) CompactToolResult(maxLen int) bool {
 	truncated := false
 	for i, block := range m.Content {

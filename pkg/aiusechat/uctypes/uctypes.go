@@ -382,6 +382,8 @@ type GenAIMessage interface {
 	CompactToolResult(maxLen int) bool
 	// IsToolResultMessage returns true if this message contains tool result content
 	IsToolResultMessage() bool
+	// GetContentSize returns the approximate size of the message content in bytes
+	GetContentSize() int
 }
 
 const (
