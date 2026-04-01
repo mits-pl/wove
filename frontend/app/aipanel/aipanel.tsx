@@ -344,16 +344,17 @@ const AIPanelComponentInner = memo(({ roundTopLeft }: AIPanelComponentInnerProps
         globalStore.set(model.isAIStreaming, status === "streaming" || status === "submitted");
     }, [status]);
 
-    // Watchdog: if status is stuck on "streaming" or "submitted" for >120s, force stop and show error
+    // Watchdog: if status is stuck on "streaming" or "submitted" for >200s, force stop and show error
+    // Must be longer than backend timeout (180s) to avoid killing requests that backend would handle
     useEffect(() => {
         if (status !== "streaming" && status !== "submitted") {
             return;
         }
         const watchdogTimer = setTimeout(() => {
-            console.warn("[aipanel] watchdog: AI response timed out after 120s, forcing stop");
+            console.warn("[aipanel] watchdog: AI response timed out after 200s, forcing stop");
             stop();
-            model.setError("AI response timed out. The model may be overloaded or the request was too large. Try again or switch to a different model.");
-        }, 120_000);
+            model.setError("AI response timed out after 200s. The model may be overloaded or the request was too large. Try again or switch to a different model.");
+        }, 200_000);
         return () => clearTimeout(watchdogTimer);
     }, [status, messages.length]);
 
