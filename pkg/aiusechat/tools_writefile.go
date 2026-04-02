@@ -137,6 +137,14 @@ func verifyWriteTextFileInput(input any, toolUseData *uctypes.UIMessageDataToolU
 		if !WasFileRead(expandedPath) {
 			return fmt.Errorf("you must read the file with read_text_file before overwriting it. Read %s first to understand its current content, then retry the write", params.Filename)
 		}
+		// Block full-file rewrites on large existing files — force use of edit_text_file instead
+		existingData, readErr := os.ReadFile(expandedPath)
+		if readErr == nil {
+			existingLines := bytes.Count(existingData, []byte("\n"))
+			if existingLines > 200 {
+				return fmt.Errorf("file %s already exists and has %d lines. Do NOT rewrite the entire file. Use edit_text_file with targeted replacements instead. Break your changes into smaller edits: first update one section, verify, then the next", params.Filename, existingLines)
+			}
+		}
 	}
 
 	_, err = validateTextFile(expandedPath, "write to", false)

@@ -179,6 +179,10 @@ func buildAnthropicHTTPRequest(ctx context.Context, msgs []anthropicInputMessage
 	if err != nil {
 		return nil, err
 	}
+	// Debug: log full request body for non-anthropic.com endpoints
+	if !strings.Contains(endpoint, "anthropic.com") {
+		log.Printf("[anthropic-debug] request body (%d bytes): %.2000s\n", buf.Len(), buf.String())
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, &buf)
 	if err != nil {
 		return nil, err

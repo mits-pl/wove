@@ -812,7 +812,7 @@ func WaveAIPostMessageHandler(w http.ResponseWriter, r *http.Request) {
 		TabId:                req.TabId,
 		WidgetAccess:         req.WidgetAccess,
 		MCPAccess:            req.MCPAccess,
-		AllowNativeWebSearch: true,
+		AllowNativeWebSearch: aiOpts.Provider == uctypes.AIProvider_Wave || strings.Contains(aiOpts.Endpoint, "anthropic.com"),
 		BuilderId:            req.BuilderId,
 		BuilderAppId:         req.BuilderAppId,
 		OwnedWidgets:         uctypes.NewOwnedWidgetSet(),

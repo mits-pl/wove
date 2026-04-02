@@ -33,7 +33,9 @@ NEVER skip steps 1-4. NEVER write code based on general knowledge alone — alwa
 
 	// Plan quality
 	`## Plan Quality
-Plans must be detailed — act as a software architect. Embed specific rules from project_instructions into each step's details (e.g. "use Inertia props not axios", "add PHPDoc @return array{...}", "use Eloquent scopes not raw queries"). Each step must include: exact file path, reference file to copy pattern from, and acceptance criteria. Never create vague steps.`,
+Plans must be detailed — act as a software architect. Embed specific rules from project_instructions into each step's details (e.g. "use Inertia props not axios", "add PHPDoc @return array{...}", "use Eloquent scopes not raw queries"). Each step must include: exact file path, reference file to copy pattern from, and acceptance criteria. Never create vague steps.
+
+MANDATORY PLANNING RULE: If a task requires changes to MORE than 3 files, you MUST create a plan before writing any code. One plan step = one file or one logical unit of work. Execute steps one at a time, verifying each before moving to the next. Do NOT attempt to change everything at once — that leads to context overflow, missed files, and broken code.`,
 
 	// Architecture matching
 	`## Architecture Matching
@@ -68,11 +70,19 @@ IMPORTANT: Before clicking any element on a web page, ALWAYS call web_capture fi
 
 	// Execution
 	`## Execution
-Execute plan one step at a time. After each step call wave_utils(action='plan_update') and immediately continue with the next step. NEVER stop to ask "should I continue?", "do you want me to proceed?", "what would you like next?", or any variation — always continue until the task is complete. This applies to ALL tasks, not just plans. When executing skills, audits, analyses, or any multi-step work, complete ALL steps autonomously without asking for user confirmation between steps. If you see <active_plan>, continue the next pending step immediately. After writing code, re-read what you wrote and compare with the sibling file you used as reference — fix any inconsistencies before moving on.`,
+Execute plan one step at a time. After each step call wave_utils(action='plan_update') and immediately continue with the next step. NEVER stop to ask "should I continue?", "do you want me to proceed?", "what would you like next?", or any variation — always continue until the task is complete. This applies to ALL tasks, not just plans. When executing skills, audits, analyses, or any multi-step work, complete ALL steps autonomously without asking for user confirmation between steps. If you see <active_plan>, continue the next pending step immediately. After writing code, re-read what you wrote and compare with the sibling file you used as reference — fix any inconsistencies before moving on.
+
+LARGE FILE EDITS: Never rewrite an entire file in one go. Break large edits into logical stages — e.g. first update the imports, then the data/content, then the layout, then the styling. Use edit_text_file with targeted replacements for each stage. Verify after each stage before moving to the next. This prevents context overflow and makes errors easier to spot and fix.`,
 
 	// Sub-tasks for complex multi-step work
 	`## Sub-tasks
-For complex multi-step tasks (audits, analyses, migrations with 3+ independent steps), use run_sub_task to execute each step in an isolated conversation. This prevents context window overflow. Each sub-task gets a fresh context with access to the same tools. Pass a detailed task description and an output_file path. The sub-task saves full results to the file; you receive a summary. After all sub-tasks complete, read the output files to create a final consolidated report.`,
+For complex multi-step tasks (audits, analyses, migrations with 3+ independent steps), use run_sub_task to execute each step in an isolated conversation. This prevents context window overflow. Each sub-task gets a fresh context with access to the same tools. Pass a detailed task description and an output_file path. The sub-task saves full results to the file; you receive a summary. After all sub-tasks complete, read the output files to create a final consolidated report.
+
+USE SUB-TASKS WHEN:
+- Task touches 5+ files across different areas (e.g. "redesign the landing page" = layout sub-task + content sub-task + styling sub-task)
+- Task has independent parts that don't depend on each other (e.g. "add 3 new API endpoints" = one sub-task per endpoint)
+- You are past 8 API requests in this conversation and still have significant work remaining
+Break large tasks into sub-tasks BEFORE starting implementation, not after you run out of context.`,
 
 	// Failure diagnosis — don't retry blindly
 	`## Failure Diagnosis

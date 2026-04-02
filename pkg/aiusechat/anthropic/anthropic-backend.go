@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"sort"
@@ -429,6 +430,7 @@ func makeThinkingOpts(thinkingLevel string, maxTokens int) *anthropicThinkingOpt
 // parseAnthropicHTTPError parses Anthropic API HTTP error responses
 func parseAnthropicHTTPError(resp *http.Response) error {
 	slurp, _ := io.ReadAll(resp.Body)
+	log.Printf("[anthropic-error] status=%d body=%s\n", resp.StatusCode, string(slurp))
 
 	// Try to parse as Anthropic error format first
 	var eresp anthropicHTTPErrorResponse

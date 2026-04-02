@@ -114,15 +114,28 @@
         "ai:capabilities": ["tools", "images", "pdfs"],
         "ai:switchcompat": ["byok-google"]
     },
+    "byok@minimax-fast": {
+        "display:name": "MiniMax M2.7 High Speed",
+        "display:order": 34,
+        "display:icon": "bolt",
+        "display:description": "MiniMax M2.7 High Speed\nSame quality, faster output",
+        "ai:provider": "custom",
+        "ai:apitype": "anthropic-messages",
+        "ai:model": "MiniMax-M2.7-highspeed",
+        "ai:endpoint": "https://api.minimax.io/anthropic/v1/messages",
+        "ai:apitokensecretname": "minimax_api_key",
+        "ai:capabilities": ["tools"],
+        "ai:switchcompat": ["byok-minimax"]
+    },
     "byok@minimax": {
         "display:name": "MiniMax M2.7",
         "display:order": 35,
         "display:icon": "bolt",
         "display:description": "MiniMax M2.7\nFast, cheap, 97% skill adherence",
         "ai:provider": "custom",
-        "ai:apitype": "openai-chat",
+        "ai:apitype": "anthropic-messages",
         "ai:model": "MiniMax-M2.7",
-        "ai:endpoint": "https://api.minimax.io/v1/chat/completions",
+        "ai:endpoint": "https://api.minimax.io/anthropic/v1/messages",
         "ai:apitokensecretname": "minimax_api_key",
         "ai:capabilities": ["tools"],
         "ai:switchcompat": ["byok-minimax"]
