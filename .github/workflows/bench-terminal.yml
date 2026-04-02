@@ -1,0 +1,127 @@
+name: Terminal-Bench 2.0
+run-name: "Bench: Wove + ${{ github.event.inputs.model }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Model (provider/name format)"
+        required: true
+        default: "minimax/MiniMax-M2.7"
+      k_trials:
+        description: "Trials per task"
+        required: true
+        default: "1"
+      max_tasks:
+        description: "Max tasks (0 = all)"
+        required: true
+        default: "0"
+
+env:
+  GO_VERSION: "1.25.6"
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1400
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.sum
+
+      - name: Build wove-bench for Linux
+        run: |
+          go build -tags "osusergo,sqlite_omit_load_extension" \
+            -ldflags="-s -w" \
+            -o dist/bin/wove-bench-linux-amd64 \
+            ./cmd/wove-bench/
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Harbor
+        run: pip install harbor
+
+      - name: Resolve API key
+        id: api-key
+        run: |
+          MODEL="${{ github.event.inputs.model }}"
+          PROVIDER="${MODEL%%/*}"
+          case "$PROVIDER" in
+            minimax)  echo "key=${{ secrets.MINIMAX_API_KEY }}" >> "$GITHUB_OUTPUT" ;;
+            anthropic) echo "key=${{ secrets.ANTHROPIC_API_KEY }}" >> "$GITHUB_OUTPUT" ;;
+            openai)   echo "key=${{ secrets.OPENAI_API_KEY }}" >> "$GITHUB_OUTPUT" ;;
+            google)   echo "key=${{ secrets.GOOGLE_AI_API_KEY }}" >> "$GITHUB_OUTPUT" ;;
+            *)        echo "key=${{ secrets.MINIMAX_API_KEY }}" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Run Terminal-Bench 2.0
+        env:
+          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
+          WOVE_BENCH_API_KEY: ${{ steps.api-key.outputs.key }}
+        run: |
+          ARGS="--dataset terminal-bench@2.0"
+          ARGS="$ARGS --agent-import-path bench.wove_agent:WoveAgent"
+          ARGS="$ARGS --model ${{ github.event.inputs.model }}"
+          ARGS="$ARGS -k ${{ github.event.inputs.k_trials }}"
+
+          MAX_TASKS="${{ github.event.inputs.max_tasks }}"
+          if [ "$MAX_TASKS" != "0" ]; then
+            ARGS="$ARGS -l $MAX_TASKS"
+          fi
+
+          harbor run $ARGS 2>&1 | tee bench-output.log
+
+      - name: Collect results
+        if: always()
+        run: |
+          # Find the latest job directory
+          JOB_DIR=$(ls -td jobs/*/ 2>/dev/null | head -1)
+          if [ -z "$JOB_DIR" ]; then
+            echo "No job directory found"
+            exit 0
+          fi
+
+          echo "=== RESULTS ==="
+          python3 << 'EOF'
+          import json, glob, os
+
+          results = sorted(glob.glob("jobs/*/*/result.json"))
+          passed = failed = timeouts = errors = 0
+
+          for r in results:
+              d = json.load(open(r))
+              v = d.get("verifier_result")
+              e = d.get("exception_info")
+              if v and v.get("rewards", {}).get("reward", 0) == 1.0:
+                  passed += 1
+                  print(f"  ✓ {r.split('/')[-2]}")
+              elif e and "Timeout" in str(e.get("exception_type", "")):
+                  timeouts += 1
+              elif e:
+                  errors += 1
+              else:
+                  failed += 1
+
+          total = passed + failed + timeouts + errors
+          if total > 0:
+              print(f"\nPassed: {passed}/{total} = {passed/total*100:.1f}%")
+              print(f"Failed: {failed}, Timeouts: {timeouts}, Errors: {errors}")
+          EOF
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: terminal-bench-results
+          path: |
+            jobs/
+            bench-output.log
+          retention-days: 90

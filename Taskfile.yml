@@ -646,6 +646,17 @@ tasks:
             - cmd: "{{.RMRF}} scaffold"
               ignore_error: true
 
+    bench:build:
+        desc: Build wove-bench headless agent for Linux (amd64 + arm64)
+        cmds:
+            - CGO_ENABLED=1 GOOS=linux GOARCH=amd64 CC="zig cc -target x86_64-linux-gnu.2.28" go build -tags "osusergo,sqlite_omit_load_extension" -ldflags="-s -w" -o dist/bin/wove-bench-linux-amd64 ./cmd/wove-bench/
+            - CGO_ENABLED=1 GOOS=linux GOARCH=arm64 CC="zig cc -target aarch64-linux-gnu.2.28" go build -tags "osusergo,sqlite_omit_load_extension" -ldflags="-s -w" -o dist/bin/wove-bench-linux-arm64 ./cmd/wove-bench/
+
+    bench:build:local:
+        desc: Build wove-bench for the current platform (for local testing)
+        cmds:
+            - go build -tags "osusergo,sqlite_omit_load_extension" -o dist/bin/wove-bench ./cmd/wove-bench/
+
     godoc:
         desc: Start the Go documentation server for the root module
         cmd: $(go env GOPATH)/bin/pkgsite -http=:6060
