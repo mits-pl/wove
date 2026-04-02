@@ -23,6 +23,7 @@ const (
 	OpenRouterChatEndpoint         = "https://openrouter.ai/api/v1/chat/completions"
 	NanoGPTChatEndpoint            = "https://nano-gpt.com/api/v1/chat/completions"
 	GroqChatEndpoint               = "https://api.groq.com/openai/v1/chat/completions"
+	XAIChatEndpoint                = "https://api.x.ai/v1/chat/completions"
 	AzureLegacyEndpointTemplate    = "https://%s.openai.azure.com/openai/deployments/%s/chat/completions?api-version=%s"
 	AzureResponsesEndpointTemplate = "https://%s.openai.azure.com/openai/v1/responses"
 	AzureChatEndpointTemplate      = "https://%s.openai.azure.com/openai/v1/chat/completions"
@@ -34,6 +35,7 @@ const (
 	OpenRouterAPITokenSecretName  = "OPENROUTER_KEY"
 	NanoGPTAPITokenSecretName     = "NANOGPT_KEY"
 	GroqAPITokenSecretName        = "GROQ_KEY"
+	XAIAPITokenSecretName         = "XAI_KEY"
 	AzureOpenAIAPITokenSecretName = "AZURE_OPENAI_KEY"
 	GoogleAIAPITokenSecretName    = "GOOGLE_AI_KEY"
 )
@@ -112,6 +114,20 @@ func applyProviderDefaults(config *wconfig.AIModeConfigType) {
 		}
 		if config.APITokenSecretName == "" {
 			config.APITokenSecretName = NanoGPTAPITokenSecretName
+		}
+	}
+	if config.Provider == uctypes.AIProvider_XAI {
+		if config.APIType == "" {
+			config.APIType = uctypes.APIType_OpenAIChat
+		}
+		if config.Endpoint == "" {
+			config.Endpoint = XAIChatEndpoint
+		}
+		if config.APITokenSecretName == "" {
+			config.APITokenSecretName = XAIAPITokenSecretName
+		}
+		if len(config.Capabilities) == 0 {
+			config.Capabilities = []string{uctypes.AICapabilityTools, uctypes.AICapabilityImages}
 		}
 	}
 	if config.Provider == uctypes.AIProvider_Groq {

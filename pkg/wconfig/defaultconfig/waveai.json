@@ -139,6 +139,18 @@
         "ai:capabilities": ["tools"],
         "ai:switchcompat": ["byok-local"]
     },
+    "byok@grok": {
+        "display:name": "xAI Grok 3",
+        "display:order": 45,
+        "display:icon": "bolt",
+        "display:description": "xAI Grok 3\nFast, uncensored, real-time knowledge",
+        "ai:provider": "xai",
+        "ai:apitype": "openai-chat",
+        "ai:model": "grok-3",
+        "ai:apitokensecretname": "xai_api_key",
+        "ai:capabilities": ["tools", "images"],
+        "ai:switchcompat": ["byok-xai"]
+    },
     "byok@openrouter": {
         "display:name": "OpenRouter",
         "display:order": 50,

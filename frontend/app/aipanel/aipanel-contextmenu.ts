@@ -184,6 +184,10 @@ export async function handleWaveAIContextMenu(e: React.MouseEvent, showCopy: boo
             click: () => activateByokPreset("byok@minimax", "minimax_api_key", "MiniMax API Key"),
         },
         {
+            label: "Grok (xAI)",
+            click: () => activateByokPreset("byok@grok", "xai_api_key", "xAI API Key"),
+        },
+        {
             label: "Ollama (Local)",
             click: () => activateByokPreset("byok@ollama", null, null),
         },
