@@ -34,7 +34,7 @@ jobs:
 
       - name: Build wove-bench for Linux
         run: |
-          go build -tags "osusergo,sqlite_omit_load_extension" \
+          CGO_ENABLED=0 go build -tags "osusergo,sqlite_omit_load_extension" \
             -ldflags="-s -w" \
             -o dist/bin/wove-bench-linux-amd64 \
             ./cmd/wove-bench/

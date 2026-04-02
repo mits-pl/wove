@@ -136,6 +136,13 @@ func wrapWithErrorReflection(result string, err error, toolName string, attempt 
 }
 
 func main() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[wove-bench] PANIC recovered: %v\n", r)
+			os.Exit(1)
+		}
+	}()
+
 	var (
 		model      string
 		apiType    string
@@ -361,10 +368,17 @@ You MUST read a file before editing it — blind edits are rejected.
 
 ## Doom Loop Prevention
 If you find yourself repeating the same action more than twice:
-- STOP and reassess your approach
-- Try a completely different strategy
+- STOP IMMEDIATELY and reassess your approach
+- Try a completely different strategy — not a small variation, a DIFFERENT approach
 - If reading the same file repeatedly, you already have the info — use it
 - If running the same command, the output won't change — analyze it instead
+- If 3 failed attempts at the same approach, switch strategy entirely
+
+## Time Management
+You have limited time. If after 20 turns you haven't solved the task:
+- Write your best partial solution
+- Run the tests to see how close you are
+- Focus on fixing the most impactful test failure, not all of them
 
 ## Unfamiliar Tools
 When using an unfamiliar tool or library, read its docs first — run --help, check README.md, or read man pages. Never guess CLI flags or API calls.
