@@ -366,6 +366,9 @@ If you find yourself repeating the same action more than twice:
 - If reading the same file repeatedly, you already have the info — use it
 - If running the same command, the output won't change — analyze it instead
 
+## Unfamiliar Tools
+When using an unfamiliar tool or library, read its docs first — run --help, check README.md, or read man pages. Never guess CLI flags or API calls.
+
 ## Error Handling
 When a tool call fails:
 1. Read the ACTUAL error message — don't skip it

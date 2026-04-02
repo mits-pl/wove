@@ -54,7 +54,8 @@ IMPORTANT: Prefer edit_text_file over sed/awk for file modifications — it crea
 IMPORTANT: For searching file contents (grep, ripgrep, ag, etc.), ALWAYS use the grep tool — NEVER run grep/rg/ag via term_run_command. The grep tool runs silently in the background without cluttering the terminal.
 IMPORTANT: You receive a truncated repo_map in the system prompt — it gives you a high-level overview of the project structure but may be incomplete for larger codebases. Use the repo_map tool to explore further: scan a specific subdirectory for detailed definitions, filter by kind (func, method, class, type, interface, enum), or increase max_chars (up to 30000) to see more. Call it before diving into individual file reads when you need to understand what exists in a directory.
 IMPORTANT: term_run_command is ONLY for short-lived commands that exit quickly (git, npm, ls, etc.). NEVER use term_run_command for interactive or long-running programs (claude, vim, nano, top, ssh, node REPL, python REPL, docker compose up, etc.) — it will hang waiting for the command to finish. For interactive programs, use term_send_input to type commands and term_get_scrollback to read output.
-IMPORTANT: You can omit widget_id in term_run_command — it will auto-select an existing ready terminal or create a new one. Only pass widget_id when you need a specific terminal.`,
+IMPORTANT: You can omit widget_id in term_run_command — it will auto-select an existing ready terminal or create a new one. Only pass widget_id when you need a specific terminal.
+IMPORTANT: When using an unfamiliar tool or library, read its docs first — run --help, check README.md, or read man pages. Never guess CLI flags or API calls.`,
 
 	// Web search — always use the webview widget
 	`## Web Browsing
