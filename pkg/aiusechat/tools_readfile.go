@@ -335,6 +335,13 @@ func readTextFileCallback(input any, toolUseData *uctypes.UIMessageDataToolUse) 
 	// Track that this file was read (for read-before-write enforcement)
 	TrackFileRead(expandedPath)
 
+	// Append explicit truncation warning in the data itself (not just metadata)
+	// Models like GPT read the content but ignore JSON metadata fields
+	totalLines := strings.Count(data, "\n") + 1
+	if stopReason == "read_limit" || stopReason == StopReasonMaxBytes {
+		data += fmt.Sprintf("\n\nWARNING: This output is TRUNCATED (reason: %s). You are seeing %d lines out of a larger file (%d bytes total). Do NOT assume you have seen the entire file. Use offset parameter to read remaining sections.", stopReason, totalLines, totalSize)
+	}
+
 	result := map[string]any{
 		"total_size":    totalSize,
 		"data":          data,

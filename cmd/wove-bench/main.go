@@ -316,6 +316,38 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 		log.Printf("[wove-bench] error: %v\n", err)
 	}
 
+	// --- Forced verification step (ForgeCode pattern) ---
+	// After agent finishes, inject a verification turn.
+	// This catches cases where agent says "done" but didn't actually run tests.
+	if aiMetrics != nil && aiMetrics.ToolUseCount > 0 && ctx.Err() == nil {
+		log.Printf("[wove-bench] injecting forced verification step\n")
+		verifyMsg := &uctypes.AIMessage{
+			MessageId: uuid.New().String(),
+			Parts: []uctypes.AIMessagePart{
+				{Type: uctypes.AIMessagePartTypeText, Text: `VERIFICATION REQUIRED. You MUST now verify your work before finishing:
+1. Run the test suite: bash /tests/test.sh 2>&1 || pytest /tests/ -x 2>&1
+2. Read the test output carefully
+3. If any test fails, fix the issue and re-run
+4. Only stop when ALL tests pass
+Do NOT skip this step. Do NOT say "done" without running tests.`},
+			},
+		}
+		convertedVerify, verifyErr := backend.ConvertAIMessageToNativeChatMessage(*verifyMsg)
+		if verifyErr == nil {
+			_ = chatstore.DefaultChatStore.PostMessage(chatOpts.ChatId, &chatOpts.Config, convertedVerify)
+			verifyMetrics, verifyErr := aiusechat.RunAIChat(ctx, sseHandler, backend, chatOpts)
+			if verifyErr != nil {
+				log.Printf("[wove-bench] verification error: %v\n", verifyErr)
+			}
+			if verifyMetrics != nil {
+				aiMetrics.Usage.InputTokens += verifyMetrics.Usage.InputTokens
+				aiMetrics.Usage.OutputTokens += verifyMetrics.Usage.OutputTokens
+				aiMetrics.ToolUseCount += verifyMetrics.ToolUseCount
+				aiMetrics.RequestCount += verifyMetrics.RequestCount
+			}
+		}
+	}
+
 	result := BenchMetrics{
 		DurationMs: int(time.Since(startTime).Milliseconds()),
 		DoomLoops:  doomDetector.detected,
@@ -654,7 +686,7 @@ func makeReadFileTool(cwd string, doom *doomLoopDetector, reads *readTracker) fu
 			fmt.Fprintf(&sb, "%d\t%s\n", i+1, lines[i])
 		}
 		if end < len(lines) {
-			fmt.Fprintf(&sb, "\n... (%d more lines, use offset=%d to continue)", len(lines)-end, end)
+			fmt.Fprintf(&sb, "\n\nWARNING: This output is TRUNCATED. You are seeing lines %d-%d out of %d total lines. %d lines are NOT shown. Use offset=%d to read the next section. Do NOT assume you have seen the entire file.", offset+1, end, len(lines), len(lines)-end, end)
 		}
 
 		return sb.String(), nil
