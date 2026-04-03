@@ -316,6 +316,41 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 		log.Printf("[wove-bench] error: %v\n", err)
 	}
 
+	// --- Early-quit prevention ---
+	// If agent stopped in <5 turns, it likely gave up without trying.
+	// Inject a nudge to continue working.
+	if aiMetrics != nil && aiMetrics.RequestCount < 5 && aiMetrics.ToolUseCount < 6 && ctx.Err() == nil {
+		log.Printf("[wove-bench] early-quit detected (%d turns, %d tools) — injecting retry\n", aiMetrics.RequestCount, aiMetrics.ToolUseCount)
+		retryMsg := &uctypes.AIMessage{
+			MessageId: uuid.New().String(),
+			Parts: []uctypes.AIMessagePart{
+				{Type: uctypes.AIMessagePartTypeText, Text: `You stopped after only ` + fmt.Sprintf("%d", aiMetrics.RequestCount) + ` turns. The task is NOT complete.
+
+Go back and follow the strategy:
+1. Read the test files: bash -c "cat /tests/test.sh 2>/dev/null; cat /tests/test*.py 2>/dev/null; ls /tests/"
+2. Understand what the tests expect
+3. Implement the solution — create ALL required files
+4. Run the tests and iterate until they pass
+
+Do NOT stop until you have run the tests and they pass (or you have exhausted all approaches).`},
+			},
+		}
+		convertedRetry, retryErr := backend.ConvertAIMessageToNativeChatMessage(*retryMsg)
+		if retryErr == nil {
+			_ = chatstore.DefaultChatStore.PostMessage(chatOpts.ChatId, &chatOpts.Config, convertedRetry)
+			retryMetrics, retryErr := aiusechat.RunAIChat(ctx, sseHandler, backend, chatOpts)
+			if retryErr != nil {
+				log.Printf("[wove-bench] retry error: %v\n", retryErr)
+			}
+			if retryMetrics != nil {
+				aiMetrics.Usage.InputTokens += retryMetrics.Usage.InputTokens
+				aiMetrics.Usage.OutputTokens += retryMetrics.Usage.OutputTokens
+				aiMetrics.ToolUseCount += retryMetrics.ToolUseCount
+				aiMetrics.RequestCount += retryMetrics.RequestCount
+			}
+		}
+	}
+
 	// --- Forced verification step (ForgeCode pattern) ---
 	// After agent finishes, inject a verification turn.
 	// This catches cases where agent says "done" but didn't actually run tests.
