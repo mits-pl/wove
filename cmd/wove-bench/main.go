@@ -306,6 +306,17 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 	if err != nil {
 		log.Fatalf("[wove-bench] backend error: %v", err)
 	}
+
+	// --- Test-first: pre-read tests and inject into instruction ---
+	testContent := readTestFiles(cfg.CWD)
+	if testContent != "" {
+		log.Printf("[wove-bench] injected %d bytes of test content into instruction\n", len(testContent))
+		// Prepend test content to instruction so model sees it immediately
+		aiMessage.Parts = []uctypes.AIMessagePart{
+			{Type: uctypes.AIMessagePartTypeText, Text: cfg.Instruction + "\n\n<test_files_content>\n" + testContent + "\n</test_files_content>\n\nThe above shows the EXACT tests that will verify your solution. Study them carefully before implementing."},
+		}
+	}
+
 	convertedMessage, err := backend.ConvertAIMessageToNativeChatMessage(*aiMessage)
 	if err != nil {
 		log.Fatalf("[wove-bench] message conversion error: %v", err)
@@ -575,9 +586,10 @@ func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker
 		},
 		{
 			Name:        "grep",
-			Description: "Search for a regex pattern in files. Returns matching lines with file paths and line numbers.",
+			Description: "Search for a regex pattern in files recursively. Returns matching lines with file:line format. Use for finding code patterns, function definitions, and references.",
 			InputSchema: map[string]any{
 				"type": "object",
+				"required": []any{"pattern"},
 				"properties": map[string]any{
 					"pattern": map[string]any{
 						"type":        "string",
@@ -585,26 +597,25 @@ func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker
 					},
 					"path": map[string]any{
 						"type":        "string",
-						"description": "Directory or file to search (default: cwd)",
+						"description": "Directory or file to search (default: working directory)",
 					},
 					"include": map[string]any{
 						"type":        "string",
-						"description": "Glob pattern to filter files (e.g. '*.py')",
+						"description": "File glob filter (e.g. '*.py', '*.c')",
 					},
 				},
-				"required": []any{"pattern"},
 			},
 			ToolTextCallback: makeGrepTool(cwd, doom),
 		},
 		{
 			Name:        "list_dir",
-			Description: "List directory contents. Shows files and subdirectories.",
+			Description: "List files and directories. Returns names with / suffix for directories.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"path": map[string]any{
 						"type":        "string",
-						"description": "Directory path (default: cwd)",
+						"description": "Directory to list (default: working directory)",
 					},
 				},
 			},
@@ -925,6 +936,44 @@ func rollbackCheckpoint(cwd string) {
 	cmd.Dir = cwd
 	output, _ := cmd.CombinedOutput()
 	log.Printf("[checkpoint] rollback: %s\n", strings.TrimSpace(string(output)))
+}
+
+// readTestFiles reads test files from /tests/ and returns their content
+// so the model sees test expectations in the first message (test-first pattern).
+func readTestFiles(cwd string) string {
+	var sb strings.Builder
+	testDirs := []string{"/tests", filepath.Join(cwd, "tests")}
+
+	for _, dir := range testDirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if !strings.HasSuffix(name, ".sh") && !strings.HasSuffix(name, ".py") && !strings.HasSuffix(name, ".bats") {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(dir, name))
+			if err != nil {
+				continue
+			}
+			content := string(data)
+			if len(content) > 5000 {
+				content = content[:5000] + "\n... [truncated]"
+			}
+			fmt.Fprintf(&sb, "--- %s/%s ---\n%s\n\n", dir, name, content)
+		}
+	}
+
+	result := sb.String()
+	if len(result) > 15000 {
+		result = result[:15000] + "\n... [truncated]"
+	}
+	return result
 }
 
 func isInDocker() bool {

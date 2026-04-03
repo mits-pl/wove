@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import shlex
+import tempfile
 from pathlib import Path
 
 from harbor.agents.base import BaseAgent
@@ -21,6 +22,11 @@ from harbor.models.agent.context import AgentContext
 logger = logging.getLogger(__name__)
 
 WOVE_BENCH_BINARY = "/usr/local/bin/wove-bench"
+
+# Cross-task error memory — shared across all trials in a job.
+# Stores (task_category, error_summary) tuples from failed tasks.
+_error_memory: list[dict] = []
+_MAX_ERROR_MEMORY = 20
 
 
 class WoveAgent(BaseAgent):
@@ -60,6 +66,14 @@ class WoveAgent(BaseAgent):
 
     async def setup(self, environment: BaseEnvironment) -> None:
         """Upload and install wove-bench binary in the container."""
+        # Install CA certificates (some containers lack them, causing TLS errors)
+        await environment.exec(
+            "apt-get update -qq && apt-get install -y -qq ca-certificates > /dev/null 2>&1 || "
+            "apk add --no-cache ca-certificates > /dev/null 2>&1 || "
+            "yum install -y ca-certificates > /dev/null 2>&1 || true",
+            user="root", timeout_sec=60,
+        )
+
         # Determine correct binary for container architecture
         binary_path = Path(__file__).parent.parent / "dist" / "bin" / "wove-bench-linux-amd64"
         if not binary_path.exists():
@@ -70,14 +84,6 @@ class WoveAgent(BaseAgent):
                 f"wove-bench binary not found at {binary_path}. Build it first:\n"
                 f"  task bench:build"
             )
-
-        # Install CA certificates (some containers lack them, causing TLS errors)
-        await environment.exec(
-            "apt-get update -qq && apt-get install -y -qq ca-certificates > /dev/null 2>&1 || "
-            "apk add --no-cache ca-certificates > /dev/null 2>&1 || "
-            "yum install -y ca-certificates > /dev/null 2>&1 || true",
-            user="root", timeout_sec=60,
-        )
 
         self.logger.info(f"Uploading wove-bench binary from {binary_path}")
         await environment.upload_file(str(binary_path), WOVE_BENCH_BINARY)
@@ -95,6 +101,8 @@ class WoveAgent(BaseAgent):
         context: AgentContext,
     ) -> None:
         """Run wove-bench agent on the task instruction."""
+        global _error_memory
+
         provider, model_name = self._parse_model()
         config = self.MODEL_CONFIGS.get(provider, self.MODEL_CONFIGS.get("openai", {}))
 
@@ -105,11 +113,9 @@ class WoveAgent(BaseAgent):
             or os.environ.get("WOVE_BENCH_API_KEY", "")
             or os.environ.get("API_KEY", "")
         )
-        # Also check kwargs passed via --agent-kwargs
         if not api_key and hasattr(self, '_kwargs'):
             api_key = self._kwargs.get("api_key", "")
         if not api_key:
-            # Last resort: check .env file in project root
             env_file = Path(__file__).parent.parent / ".env"
             if env_file.exists():
                 for line in env_file.read_text().splitlines():
@@ -122,7 +128,23 @@ class WoveAgent(BaseAgent):
                 f"or create .env file with {env_key}=xxx"
             )
 
+        # --- Cross-task error memory: build hints from previous failures ---
+        error_hints = ""
+        if _error_memory:
+            hints = _error_memory[-10:]  # last 10 errors
+            error_lines = []
+            for h in hints:
+                error_lines.append(f"- Task '{h['task']}': {h['error']}")
+            error_hints = (
+                "\n\n<previous_task_errors>\n"
+                "Other tasks in this benchmark session failed for these reasons. "
+                "Avoid making the same mistakes:\n"
+                + "\n".join(error_lines)
+                + "\n</previous_task_errors>"
+            )
+
         # Build command
+        full_instruction = instruction + error_hints
         cmd_parts = [
             WOVE_BENCH_BINARY,
             "--model", shlex.quote(model_name),
@@ -136,10 +158,10 @@ class WoveAgent(BaseAgent):
         if config.get("endpoint"):
             cmd_parts.extend(["--endpoint", config["endpoint"]])
 
-        cmd_parts.append(shlex.quote(instruction))
+        cmd_parts.append(shlex.quote(full_instruction))
         cmd = " ".join(cmd_parts)
 
-        self.logger.info(f"Running wove-bench: model={model_name} provider={provider}")
+        self.logger.info(f"Running wove-bench: model={model_name} provider={provider} error_hints={len(_error_memory)}")
 
         result = await environment.exec(
             cmd,
@@ -167,6 +189,30 @@ class WoveAgent(BaseAgent):
             except json.JSONDecodeError:
                 self.logger.warning(f"Failed to parse metrics JSON: {metrics_result.stdout[:200]}")
 
+        # --- Cross-task error memory: collect failure info ---
+        # Check verifier result by reading test output
+        test_result = await environment.exec(
+            "cat /tmp/wove-test-output.txt 2>/dev/null || "
+            "bash -c 'bash /tests/test.sh 2>&1 || pytest /tests/ -x 2>&1' 2>/dev/null | tail -20",
+            timeout_sec=30,
+        )
+        test_output = test_result.stdout[-500:] if test_result.stdout else ""
+
+        # Extract task name from instruction (first line or first 50 chars)
+        task_name = instruction.split("\n")[0][:80]
+
+        if test_result.return_code != 0 and test_output:
+            # Task likely failed — store error for future tasks
+            error_summary = self._extract_error_summary(test_output)
+            if error_summary:
+                _error_memory.append({
+                    "task": task_name,
+                    "error": error_summary,
+                })
+                if len(_error_memory) > _MAX_ERROR_MEMORY:
+                    _error_memory = _error_memory[-_MAX_ERROR_MEMORY:]
+                self.logger.info(f"Error memory: stored '{error_summary}' (total: {len(_error_memory)})")
+
         # Save agent log
         log_path = self.logs_dir / "agent.log"
         log_path.write_text(
@@ -181,3 +227,21 @@ class WoveAgent(BaseAgent):
             provider, model = self.model_name.split("/", 1)
             return provider.lower(), model
         return "openai", self.model_name
+
+    @staticmethod
+    def _extract_error_summary(test_output: str) -> str:
+        """Extract a concise error summary from test output."""
+        lines = test_output.strip().split("\n")
+        # Look for common failure patterns
+        for line in reversed(lines):
+            line = line.strip()
+            if any(kw in line.lower() for kw in [
+                "assert", "error", "failed", "not found", "no such",
+                "permission denied", "timeout", "import", "syntax",
+            ]):
+                return line[:150]
+        # Fallback: last non-empty line
+        for line in reversed(lines):
+            if line.strip():
+                return line.strip()[:150]
+        return ""
