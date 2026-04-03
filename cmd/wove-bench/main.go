@@ -295,6 +295,9 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 		log.Printf("[wove-bench] TLS verification disabled (Docker container)\n")
 	}
 
+	// Initialize git for checkpoint/rollback support
+	initGitCheckpoint(cfg.CWD)
+
 	log.Printf("[wove-bench] model=%s api=%s endpoint=%s tools=%d\n", cfg.Model, cfg.APIType, cfg.Endpoint, len(tools))
 	log.Printf("[wove-bench] cwd=%s\n", cfg.CWD)
 	log.Printf("[wove-bench] instruction: %.200s\n", cfg.Instruction)
@@ -407,73 +410,80 @@ Be concise — lead with actions and results, not explanations.
 - Tools: bash, read_file, write_file, edit_file, grep, list_dir
 - Act autonomously — never ask for confirmation, never stop to ask "should I continue?"
 - Tests exist at /tests/ — passing them is the ONLY success criterion
-- This conversation has unlimited context through automatic management. Do NOT stop until the objective is fully achieved.
+- This conversation has unlimited context. Do NOT stop until the objective is fully achieved.
+- Git is initialized for checkpointing. If your approach fails after 3 attempts, run: git checkout . to reset and try a COMPLETELY different strategy.
 
-## Benchmark Strategy (CRITICAL — follow this exact order)
+## Strategy (CRITICAL — follow this exact order)
 
-### Phase 1: UNDERSTAND (1-2 turns max)
+### Phase 1: UNDERSTAND — Think deeply, explore thoroughly (1-3 turns)
+This is the MOST IMPORTANT phase. Invest time here to save time later.
 On your FIRST turn, run these in parallel:
-- list_dir to see what files exist in the working directory
+- list_dir to see what files exist
 - bash: cat /tests/test.sh 2>/dev/null; cat /tests/test*.py 2>/dev/null; ls /tests/ 2>/dev/null
-This tells you EXACTLY what the verifier checks. Identify what files/outputs the tests expect.
+- bash: find . -type f -name "*.py" -o -name "*.c" -o -name "*.js" -o -name "*.go" -o -name "*.rs" 2>/dev/null | head -30
 
-### Phase 2: IMPLEMENT (3-5 turns)
-Write the solution directly. Don't over-analyze input data.
-Create ALL files the tests expect to exist.
-A working solution beats an elegant one.
+Identify:
+1. EXACTLY what files/outputs the tests check for
+2. What inputs/data are available
+3. What language/tools are needed
 
-### Phase 3: TEST & ITERATE (3-5 cycles max)
+### Phase 2: IMPLEMENT — Start simple, iterate up (3-8 turns)
+CRITICAL RULE: Start with the SIMPLEST possible solution.
+- First attempt should be 1-20 lines of code that handles the core case
+- Run tests IMMEDIATELY after your first implementation
+- Only add complexity if tests tell you what's missing
+- Do NOT over-engineer on the first pass
+- Do NOT analyze input data for 10 turns before writing code — write code after 2 turns max
+
+### Phase 3: TEST & FIX — Tight feedback loop (3-5 cycles)
 Run: bash /tests/test.sh 2>&1 || bash -c "cd / && pytest /tests/ -x 2>&1"
 Read the error output carefully.
-Fix ONLY what the test says is wrong.
+Fix ONLY what the test says is wrong — not what you think might be wrong.
 Re-run after each fix. Stop when tests pass.
 
+### Phase 4: STUCK? — Reset and try differently
+If after 3 failed fix attempts for the same error:
+1. Run: git checkout . (reset all changes)
+2. Re-read the test expectations
+3. Try a COMPLETELY different approach (different algorithm, different library, different structure)
+Do not keep patching a broken approach. Fresh start is faster.
+
+## Progressive Complexity
+- Level 1: Hardcoded values, minimal logic (does the test even check this?)
+- Level 2: Basic implementation handling main case
+- Level 3: Edge cases, error handling, optimizations
+Start at Level 1. Only go to Level 2 if Level 1 fails tests. Only go to Level 3 if Level 2 fails.
+
 ## Tool Usage
-Use tools proactively. When multiple tool calls are independent (reading several files, running unrelated commands), execute them in parallel in a single response.
+Use tools proactively. When multiple tool calls are independent, execute them in parallel.
 Prefer edit_file over full file rewrites when making targeted changes.
-You MUST read a file before editing it — blind edits are rejected.
+You MUST read a file before editing it.
 
 ## Doom Loop Prevention
-If you find yourself repeating the same action more than twice:
-- STOP IMMEDIATELY and reassess your approach
-- Try a completely different strategy — not a small variation, a DIFFERENT approach
-- If reading the same file repeatedly, you already have the info — use it
-- If running the same command, the output won't change — analyze it instead
-- If 3 failed attempts at the same approach, switch strategy entirely
+If repeating the same action more than twice:
+- STOP IMMEDIATELY
+- Run: git checkout . to reset
+- Try a COMPLETELY different approach — not a variation, a DIFFERENT strategy
 
 ## Time Management
-You have limited time. If after 20 turns you haven't solved the task:
-- Write your best partial solution
-- Run the tests to see how close you are
-- Focus on fixing the most impactful test failure, not all of them
+If after 15 turns you haven't passed any tests:
+- Run tests to see current state
+- Focus on the EASIEST failing test first
+- Get partial credit rather than zero
 
 ## Unfamiliar Tools
-When using an unfamiliar tool or library, read its docs first — run --help, check README.md, or read man pages. Never guess CLI flags or API calls.
+When using an unfamiliar tool or library, read its docs first — run --help, check README.md. Never guess CLI flags.
 
 ## Error Handling
 When a tool call fails:
-1. Read the ACTUAL error message — don't skip it
-2. Pinpoint exactly what was wrong
-3. Explain to yourself why that mistake happened
-4. Make the CORRECT tool call — do NOT repeat the same mistake
-5. You have maximum 3 attempts per operation. After that, try a different approach entirely.
-
-## Code Discipline
-- Don't over-engineer. A working solution beats an elegant one.
-- Match existing code style if modifying files.
-- After writing code, re-read it to verify correctness.
-- Do what has been asked; nothing more, nothing less.
-- NEVER create files unless the task requires it.
+1. Read the actual error message
+2. Pinpoint what was wrong
+3. Fix it — do NOT repeat the same mistake
+4. After 3 failures on same operation, try different approach entirely
 
 ## Verification
-NEVER consider yourself done without running verification.
-If tests exist at /tests/, run them. If they pass, you're done. If not, fix and re-run.
-If you wrote code but didn't test it, YOU ARE NOT DONE.
-
-## Honesty
-Report outcomes faithfully. If tests fail, say which ones and why.
-Never say "all tests pass" when output shows failures.
-Never characterize incomplete or broken work as done.`, cwd)
+NEVER consider yourself done without running tests.
+If you wrote code but didn't test it, YOU ARE NOT DONE.`, cwd)
 }
 
 // buildStandaloneTools creates filesystem/shell tools with doom-loop detection and read-before-edit enforcement.
@@ -646,7 +656,8 @@ func makeBashTool(cwd string, doom *doomLoopDetector) func(any) (string, error) 
 		}
 
 		if doom.record("bash", truncateForHash(command)) {
-			return "<doom_loop_warning>You are repeating the same bash command. STOP and try a different approach. Analyze the output you already have instead of running the same command again.</doom_loop_warning>", nil
+			rollbackCheckpoint(cwd)
+			return "<DOOM_LOOP_DETECTED>You repeated the same bash command 3 times. All file changes have been ROLLED BACK to the last checkpoint. You MUST try a COMPLETELY DIFFERENT approach now. Do not retry the same strategy.</DOOM_LOOP_DETECTED>", nil
 		}
 
 		timeoutSec := 120
@@ -739,6 +750,7 @@ func makeWriteFileTool(cwd string, doom *doomLoopDetector, reads *readTracker) f
 		fullPath := resolvePath(cwd, path)
 
 		doom.record("write_file", truncateForHash(fullPath))
+		createCheckpoint(cwd) // save state before writing
 
 		log.Printf("[tool:write_file] %s (%d bytes)\n", fullPath, len(content))
 
@@ -773,7 +785,8 @@ func makeEditFileTool(cwd string, doom *doomLoopDetector, reads *readTracker) fu
 		}
 
 		if doom.record("edit_file", truncateForHash(fullPath+":"+oldStr[:min(50, len(oldStr))])) {
-			return "<doom_loop_warning>You are editing the same part of this file repeatedly. Step back and reconsider your approach.</doom_loop_warning>", nil
+			rollbackCheckpoint(cwd)
+			return "<DOOM_LOOP_DETECTED>You are editing the same file section repeatedly. All changes ROLLED BACK. Try a COMPLETELY DIFFERENT approach.</DOOM_LOOP_DETECTED>", nil
 		}
 
 		log.Printf("[tool:edit_file] %s\n", fullPath)
@@ -869,6 +882,49 @@ func makeListDirTool(cwd string, doom *doomLoopDetector) func(any) (string, erro
 		}
 		return sb.String(), nil
 	}
+}
+
+// --- Git Checkpoint/Rollback ---
+
+var checkpointCounter int
+var checkpointMu sync.Mutex
+
+func initGitCheckpoint(cwd string) {
+	// Initialize git repo if not already one (for checkpoint/rollback)
+	cmd := exec.Command("git", "init")
+	cmd.Dir = cwd
+	cmd.CombinedOutput() // ignore error if already initialized
+
+	cmd = exec.Command("git", "add", "-A")
+	cmd.Dir = cwd
+	cmd.CombinedOutput()
+
+	cmd = exec.Command("git", "commit", "-m", "initial-state", "--allow-empty")
+	cmd.Dir = cwd
+	cmd.CombinedOutput()
+
+	log.Printf("[checkpoint] git initialized in %s\n", cwd)
+}
+
+func createCheckpoint(cwd string) string {
+	checkpointMu.Lock()
+	checkpointCounter++
+	name := fmt.Sprintf("cp-%d", checkpointCounter)
+	checkpointMu.Unlock()
+
+	cmd := exec.Command("bash", "-c", "git add -A && git commit -m '"+name+"' --allow-empty")
+	cmd.Dir = cwd
+	cmd.CombinedOutput()
+
+	log.Printf("[checkpoint] created %s\n", name)
+	return name
+}
+
+func rollbackCheckpoint(cwd string) {
+	cmd := exec.Command("bash", "-c", "git checkout .")
+	cmd.Dir = cwd
+	output, _ := cmd.CombinedOutput()
+	log.Printf("[checkpoint] rollback: %s\n", strings.TrimSpace(string(output)))
 }
 
 func isInDocker() bool {
