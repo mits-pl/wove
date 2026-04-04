@@ -276,11 +276,12 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 	defer sseHandler.Close()
 
 	chatOpts := uctypes.WaveChatOpts{
-		ChatId:       chatID,
-		ClientId:     uuid.New().String(),
-		Config:       *opts,
-		Tools:        tools,
-		SystemPrompt: systemPrompts,
+		ChatId:           chatID,
+		ClientId:         uuid.New().String(),
+		Config:           *opts,
+		Tools:            tools,
+		SystemPrompt:     systemPrompts,
+		CompactThreshold: 200000, // 200KB — MiniMax M2.7 has 200K token context
 	}
 
 	// Skip TLS verification in Docker containers that lack CA certs

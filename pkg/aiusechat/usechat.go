@@ -478,9 +478,13 @@ func RunAIChat(ctx context.Context, sseHandler *sse.SSEHandlerCh, backend UseCha
 	firstStep := true
 	var cont *uctypes.WaveContinueResponse
 	for {
-		// Compact conversation if total content exceeds 30KB (prevents context overflow on long sessions)
-		if totalSize := chatstore.DefaultChatStore.GetTotalContentSize(chatOpts.ChatId); totalSize > 30000 {
-			compacted := chatstore.DefaultChatStore.CompactConversation(chatOpts.ChatId, 30000, 4, 1000, 500)
+		// Compact conversation when content exceeds threshold (prevents context overflow on long sessions)
+		compactThreshold := chatOpts.CompactThreshold
+		if compactThreshold <= 0 {
+			compactThreshold = 60000 // default 60KB
+		}
+		if totalSize := chatstore.DefaultChatStore.GetTotalContentSize(chatOpts.ChatId); totalSize > compactThreshold {
+			compacted := chatstore.DefaultChatStore.CompactConversation(chatOpts.ChatId, compactThreshold, 4, 1000, 500)
 			if compacted > 0 {
 				log.Printf("[context] compacted %d messages, total was %d bytes\n", compacted, totalSize)
 				// Notify frontend about context compaction

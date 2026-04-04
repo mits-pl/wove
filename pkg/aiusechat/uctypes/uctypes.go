@@ -575,6 +575,9 @@ type WaveChatOpts struct {
 	BuilderId            string
 	BuilderAppId         string
 
+	// Context compaction threshold (bytes). 0 = use default (60KB).
+	CompactThreshold int
+
 	// Sub-task configuration
 	AutoApproveTools bool // skip UI approval for tools (sub-tasks)
 	SubTaskDepth     int  // nesting depth, 0 = top-level
