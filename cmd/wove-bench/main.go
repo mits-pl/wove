@@ -98,6 +98,32 @@ func (d *doomLoopDetector) record(toolName string, argSummary string) bool {
 	return false
 }
 
+// --- Write tracker ---
+// Tracks whether the agent has written any output files.
+
+type writeTracker struct {
+	mu         sync.Mutex
+	writeCount int
+	lastPath   string
+}
+
+func newWriteTracker() *writeTracker {
+	return &writeTracker{}
+}
+
+func (wt *writeTracker) recordWrite(path string) {
+	wt.mu.Lock()
+	defer wt.mu.Unlock()
+	wt.writeCount++
+	wt.lastPath = path
+}
+
+func (wt *writeTracker) hasWritten() bool {
+	wt.mu.Lock()
+	defer wt.mu.Unlock()
+	return wt.writeCount > 0
+}
+
 // --- Read-before-edit tracker ---
 // Enforces that files must be read before editing.
 
@@ -245,7 +271,8 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 
 	doomDetector := newDoomLoopDetector()
 	readFiles := newReadTracker()
-	tools := buildStandaloneTools(cfg.CWD, doomDetector, readFiles)
+	writes := newWriteTracker()
+	tools := buildStandaloneTools(cfg.CWD, doomDetector, readFiles, writes)
 
 	systemPrompts := []string{buildSystemPrompt(cfg.CWD)}
 	if cfg.SystemFile != "" {
@@ -331,38 +358,61 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 		log.Printf("[wove-bench] error: %v\n", err)
 	}
 
-	// --- Early-quit prevention ---
-	// If agent stopped in <5 turns, it likely gave up without trying.
-	// Inject a nudge to continue working.
-	if aiMetrics != nil && aiMetrics.RequestCount < 5 && aiMetrics.ToolUseCount < 6 && ctx.Err() == nil {
-		log.Printf("[wove-bench] early-quit detected (%d turns, %d tools) — injecting retry\n", aiMetrics.RequestCount, aiMetrics.ToolUseCount)
+	// --- Anti-early-stop (ForgeCode/Blobfish pattern) ---
+	// Three conditions that trigger a "continue" nudge:
+	// 1. Agent stopped in <5 turns (barely tried)
+	// 2. Agent never wrote any output file (nothing to verify)
+	// 3. Agent used <50% of max turns and didn't verify
+	maxNudges := 3
+	for nudge := 0; nudge < maxNudges && aiMetrics != nil && ctx.Err() == nil; nudge++ {
+		shouldNudge := false
+		var nudgeMsg string
+
+		if aiMetrics.RequestCount < 5 && aiMetrics.ToolUseCount < 6 {
+			shouldNudge = true
+			nudgeMsg = fmt.Sprintf("You stopped after only %d turns. The task is NOT complete.\n\n"+
+				"1. Re-read the task instruction carefully\n"+
+				"2. Implement the solution — create ALL required files\n"+
+				"3. Verify your work\n\n"+
+				"Do NOT stop until the task is fully implemented.", aiMetrics.RequestCount)
+			log.Printf("[anti-stop] nudge %d: early quit (%d turns)\n", nudge+1, aiMetrics.RequestCount)
+		} else if !writes.hasWritten() && aiMetrics.RequestCount < cfg.MaxTurns/2 {
+			shouldNudge = true
+			nudgeMsg = "You have NOT written any output files yet. The task requires you to CREATE files.\n\n" +
+				"Write your solution NOW. Even a partial solution is better than nothing.\n" +
+				"Do not keep reading and analyzing — write code."
+			log.Printf("[anti-stop] nudge %d: no writes after %d turns\n", nudge+1, aiMetrics.RequestCount)
+		} else if aiMetrics.RequestCount < cfg.MaxTurns/3 && writes.hasWritten() {
+			shouldNudge = true
+			nudgeMsg = fmt.Sprintf("You stopped at %d turns with >60%% budget remaining.\n\n"+
+				"Verify your solution: run it, check the output, fix any issues.\n"+
+				"Do not stop early when you have time to improve.", aiMetrics.RequestCount)
+			log.Printf("[anti-stop] nudge %d: early stop with budget remaining (%d/%d turns)\n", nudge+1, aiMetrics.RequestCount, cfg.MaxTurns)
+		}
+
+		if !shouldNudge {
+			break
+		}
+
 		retryMsg := &uctypes.AIMessage{
 			MessageId: uuid.New().String(),
-			Parts: []uctypes.AIMessagePart{
-				{Type: uctypes.AIMessagePartTypeText, Text: `You stopped after only ` + fmt.Sprintf("%d", aiMetrics.RequestCount) + ` turns. The task is NOT complete.
-
-Go back and follow the strategy:
-1. Re-read the task instruction carefully
-2. List files in the working directory to understand the environment
-3. Implement the solution — create ALL required files and outputs
-4. Verify your work: check files exist, run your code, confirm output is correct
-
-Do NOT stop until the task is fully implemented and verified.`},
-			},
+			Parts:     []uctypes.AIMessagePart{{Type: uctypes.AIMessagePartTypeText, Text: nudgeMsg}},
 		}
 		convertedRetry, retryErr := backend.ConvertAIMessageToNativeChatMessage(*retryMsg)
-		if retryErr == nil {
-			_ = chatstore.DefaultChatStore.PostMessage(chatOpts.ChatId, &chatOpts.Config, convertedRetry)
-			retryMetrics, retryErr := aiusechat.RunAIChat(ctx, sseHandler, backend, chatOpts)
-			if retryErr != nil {
-				log.Printf("[wove-bench] retry error: %v\n", retryErr)
-			}
-			if retryMetrics != nil {
-				aiMetrics.Usage.InputTokens += retryMetrics.Usage.InputTokens
-				aiMetrics.Usage.OutputTokens += retryMetrics.Usage.OutputTokens
-				aiMetrics.ToolUseCount += retryMetrics.ToolUseCount
-				aiMetrics.RequestCount += retryMetrics.RequestCount
-			}
+		if retryErr != nil {
+			break
+		}
+		_ = chatstore.DefaultChatStore.PostMessage(chatOpts.ChatId, &chatOpts.Config, convertedRetry)
+		retryMetrics, retryErr := aiusechat.RunAIChat(ctx, sseHandler, backend, chatOpts)
+		if retryErr != nil {
+			log.Printf("[anti-stop] retry error: %v\n", retryErr)
+			break
+		}
+		if retryMetrics != nil {
+			aiMetrics.Usage.InputTokens += retryMetrics.Usage.InputTokens
+			aiMetrics.Usage.OutputTokens += retryMetrics.Usage.OutputTokens
+			aiMetrics.ToolUseCount += retryMetrics.ToolUseCount
+			aiMetrics.RequestCount += retryMetrics.RequestCount
 		}
 	}
 
@@ -532,7 +582,7 @@ If you wrote code but didn't test it, YOU ARE NOT DONE.`, cwd)
 }
 
 // buildStandaloneTools creates filesystem/shell tools with doom-loop detection and read-before-edit enforcement.
-func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker) []uctypes.ToolDefinition {
+func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker, writes *writeTracker) []uctypes.ToolDefinition {
 	return []uctypes.ToolDefinition{
 		{
 			Name:        "bash",
@@ -593,7 +643,7 @@ func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker
 				},
 				"required": []any{"path", "content"},
 			},
-			ToolTextCallback: makeWriteFileTool(cwd, doom, reads),
+			ToolTextCallback: makeWriteFileTool(cwd, doom, reads, writes),
 		},
 		{
 			Name:        "edit_file",
@@ -784,7 +834,7 @@ func makeReadFileTool(cwd string, doom *doomLoopDetector, reads *readTracker) fu
 	}
 }
 
-func makeWriteFileTool(cwd string, doom *doomLoopDetector, reads *readTracker) func(any) (string, error) {
+func makeWriteFileTool(cwd string, doom *doomLoopDetector, reads *readTracker, writes *writeTracker) func(any) (string, error) {
 	return func(input any) (string, error) {
 		path := getStr(input, "path")
 		content := getStr(input, "content")
@@ -808,6 +858,7 @@ func makeWriteFileTool(cwd string, doom *doomLoopDetector, reads *readTracker) f
 
 		// Mark as read since we just wrote it (agent knows the content)
 		reads.markRead(fullPath)
+		writes.recordWrite(path)
 
 		return fmt.Sprintf("Written %d bytes to %s", len(content), path), nil
 	}
