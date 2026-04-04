@@ -477,7 +477,7 @@ Be concise — lead with actions and results, not explanations.
 ## Environment
 - Working directory: %s
 - Platform: Linux (Docker container)
-- Tools: bash, read_file, write_file, edit_file, grep, list_dir
+- Tools: bash, read_file, write_file, edit_file, grep, list_dir, web_search, web_fetch
 - Act autonomously — never ask for confirmation, never stop to ask "should I continue?"
 - This conversation has unlimited context. Do NOT stop until the objective is fully achieved.
 - Git is initialized for checkpointing. If your approach fails after 3 attempts, run: git checkout . to reset and try a COMPLETELY different strategy.
@@ -704,6 +704,36 @@ func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker
 				},
 			},
 			ToolTextCallback: makeListDirTool(cwd, doom),
+		},
+		{
+			Name:        "web_search",
+			Description: "Search the web. Use when you need documentation, examples, or solutions you don't know.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"required": []any{"query"},
+				"properties": map[string]any{
+					"query": map[string]any{
+						"type":        "string",
+						"description": "Search query",
+					},
+				},
+			},
+			ToolTextCallback: makeWebSearchTool(),
+		},
+		{
+			Name:        "web_fetch",
+			Description: "Fetch a URL and return its content as text. Use to read documentation, GitHub files, or API docs.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"required": []any{"url"},
+				"properties": map[string]any{
+					"url": map[string]any{
+						"type":        "string",
+						"description": "URL to fetch",
+					},
+				},
+			},
+			ToolTextCallback: makeWebFetchTool(),
 		},
 	}
 }
@@ -978,6 +1008,117 @@ func makeListDirTool(cwd string, doom *doomLoopDetector) func(any) (string, erro
 		}
 		return sb.String(), nil
 	}
+}
+
+// --- Web Search & Fetch ---
+
+func makeWebSearchTool() func(any) (string, error) {
+	return func(input any) (string, error) {
+		query := getStr(input, "query")
+		if query == "" {
+			return "", fmt.Errorf("query is required")
+		}
+		log.Printf("[tool:web_search] %s\n", query)
+
+		searchURL := "https://lite.duckduckgo.com/lite/?q=" + strings.ReplaceAll(query, " ", "+")
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		cmd := exec.CommandContext(ctx, "curl", "-sL", "-A", "Mozilla/5.0", "-k", searchURL)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("search failed: %v", err)
+		}
+
+		result := stripHTMLTags(string(output))
+		if len(result) > 8000 {
+			result = result[:8000] + "\n... [truncated]"
+		}
+		if result == "" {
+			return "No results found", nil
+		}
+		return result, nil
+	}
+}
+
+func makeWebFetchTool() func(any) (string, error) {
+	return func(input any) (string, error) {
+		url := getStr(input, "url")
+		if url == "" {
+			return "", fmt.Errorf("url is required")
+		}
+		log.Printf("[tool:web_fetch] %s\n", url)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		cmd := exec.CommandContext(ctx, "curl", "-sL", "-A", "Mozilla/5.0", "--max-time", "25", "-k", url)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("fetch failed: %v", err)
+		}
+
+		result := string(output)
+		if len(result) > 500 && (strings.Contains(result[:500], "<html") || strings.Contains(result[:500], "<!DOCTYPE")) {
+			result = stripHTMLTags(result)
+		}
+		if len(result) > 15000 {
+			result = result[:15000] + "\n... [truncated]"
+		}
+		return result, nil
+	}
+}
+
+func stripHTMLTags(s string) string {
+	var result strings.Builder
+	inTag := false
+	inScript := false
+	lastWasSpace := false
+	lower := strings.ToLower(s)
+
+	for i := 0; i < len(s); i++ {
+		if i+7 < len(s) && (lower[i:i+7] == "<script" || lower[i:i+6] == "<style") {
+			inScript = true
+		}
+		if inScript && i+9 < len(s) && (lower[i:i+9] == "</script>" || lower[i:i+8] == "</style>") {
+			inScript = false
+			i += 8
+			continue
+		}
+		if inScript {
+			continue
+		}
+		if s[i] == '<' {
+			inTag = true
+			continue
+		}
+		if s[i] == '>' {
+			inTag = false
+			continue
+		}
+		if inTag {
+			continue
+		}
+		ch := s[i]
+		if ch == '\n' || ch == '\r' || ch == '\t' {
+			ch = ' '
+		}
+		isSpace := ch == ' '
+		if isSpace && lastWasSpace {
+			continue
+		}
+		result.WriteByte(ch)
+		lastWasSpace = isSpace
+	}
+
+	text := result.String()
+	text = strings.ReplaceAll(text, "&amp;", "&")
+	text = strings.ReplaceAll(text, "&lt;", "<")
+	text = strings.ReplaceAll(text, "&gt;", ">")
+	text = strings.ReplaceAll(text, "&quot;", "\"")
+	text = strings.ReplaceAll(text, "&#x27;", "'")
+	text = strings.ReplaceAll(text, "&nbsp;", " ")
+	return strings.TrimSpace(text)
 }
 
 // --- Git Checkpoint/Rollback ---
