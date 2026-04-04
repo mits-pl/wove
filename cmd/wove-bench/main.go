@@ -341,12 +341,12 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 				{Type: uctypes.AIMessagePartTypeText, Text: `You stopped after only ` + fmt.Sprintf("%d", aiMetrics.RequestCount) + ` turns. The task is NOT complete.
 
 Go back and follow the strategy:
-1. Read the test files: bash -c "cat /tests/test.sh 2>/dev/null; cat /tests/test*.py 2>/dev/null; ls /tests/"
-2. Understand what the tests expect
-3. Implement the solution — create ALL required files
-4. Run the tests and iterate until they pass
+1. Re-read the task instruction carefully
+2. List files in the working directory to understand the environment
+3. Implement the solution — create ALL required files and outputs
+4. Verify your work: check files exist, run your code, confirm output is correct
 
-Do NOT stop until you have run the tests and they pass (or you have exhausted all approaches).`},
+Do NOT stop until the task is fully implemented and verified.`},
 			},
 		}
 		convertedRetry, retryErr := backend.ConvertAIMessageToNativeChatMessage(*retryMsg)
