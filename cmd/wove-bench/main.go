@@ -365,20 +365,28 @@ Do NOT stop until you have run the tests and they pass (or you have exhausted al
 		}
 	}
 
-	// --- Forced verification step (ForgeCode pattern) ---
+	// --- Forced verification step ---
 	// After agent finishes, inject a verification turn.
-	// This catches cases where agent says "done" but didn't actually run tests.
+	// Adapts based on whether /tests/ exists in the container.
 	if aiMetrics != nil && aiMetrics.ToolUseCount > 0 && ctx.Err() == nil {
 		log.Printf("[wove-bench] injecting forced verification step\n")
 		verifyMsg := &uctypes.AIMessage{
 			MessageId: uuid.New().String(),
 			Parts: []uctypes.AIMessagePart{
-				{Type: uctypes.AIMessagePartTypeText, Text: `VERIFICATION REQUIRED. You MUST now verify your work before finishing:
-1. Run the test suite: bash /tests/test.sh 2>&1 || pytest /tests/ -x 2>&1
-2. Read the test output carefully
-3. If any test fails, fix the issue and re-run
-4. Only stop when ALL tests pass
-Do NOT skip this step. Do NOT say "done" without running tests.`},
+				{Type: uctypes.AIMessagePartTypeText, Text: `VERIFICATION REQUIRED before finishing.
+
+Step 1: Check if tests exist: ls /tests/ 2>/dev/null
+
+Step 2a: If /tests/ exists, run: bash /tests/test.sh 2>&1 || pytest /tests/ -x 2>&1
+  - If tests fail, fix and re-run until they pass.
+
+Step 2b: If /tests/ does NOT exist, verify manually:
+  - Re-read the original task instruction
+  - Check all required files exist at expected paths
+  - Run your solution and verify the output is correct
+  - Fix any issues you find
+
+Do NOT skip verification.`},
 			},
 		}
 		convertedVerify, verifyErr := backend.ConvertAIMessageToNativeChatMessage(*verifyMsg)
@@ -420,50 +428,51 @@ Be concise — lead with actions and results, not explanations.
 - Platform: Linux (Docker container)
 - Tools: bash, read_file, write_file, edit_file, grep, list_dir
 - Act autonomously — never ask for confirmation, never stop to ask "should I continue?"
-- Tests exist at /tests/ — passing them is the ONLY success criterion
 - This conversation has unlimited context. Do NOT stop until the objective is fully achieved.
 - Git is initialized for checkpointing. If your approach fails after 3 attempts, run: git checkout . to reset and try a COMPLETELY different strategy.
+- NOTE: Test files at /tests/ may NOT exist during your execution. They are run AFTER you finish by an external verifier. You will NOT be able to read or run them. Focus on implementing the solution correctly based on the task instruction.
 
 ## Strategy (CRITICAL — follow this exact order)
 
-### Phase 1: UNDERSTAND — Think deeply, explore thoroughly (1-3 turns)
+### Phase 1: UNDERSTAND (1-3 turns)
 This is the MOST IMPORTANT phase. Invest time here to save time later.
 On your FIRST turn, run these in parallel:
 - list_dir to see what files exist
-- bash: cat /tests/test.sh 2>/dev/null; cat /tests/test*.py 2>/dev/null; ls /tests/ 2>/dev/null
+- bash: ls -la /tests/ 2>/dev/null; cat /tests/test*.py 2>/dev/null; cat /tests/test.sh 2>/dev/null
 - bash: find . -type f -name "*.py" -o -name "*.c" -o -name "*.js" -o -name "*.go" -o -name "*.rs" 2>/dev/null | head -30
 
-Identify:
-1. EXACTLY what files/outputs the tests check for
-2. What inputs/data are available
-3. What language/tools are needed
+If /tests/ exists, read the tests — they tell you EXACTLY what the verifier expects.
+If /tests/ does NOT exist, focus on the task instruction:
+- Read it carefully — identify what files to create, what output format is expected
+- Look at existing files for clues about expected structure
+- Check README.md or any documentation files
 
 ### Phase 2: IMPLEMENT — Start simple, iterate up (3-8 turns)
 CRITICAL RULE: Start with the SIMPLEST possible solution.
 - First attempt should be 1-20 lines of code that handles the core case
-- Run tests IMMEDIATELY after your first implementation
-- Only add complexity if tests tell you what's missing
 - Do NOT over-engineer on the first pass
 - Do NOT analyze input data for 10 turns before writing code — write code after 2 turns max
 
-### Phase 3: TEST & FIX — Tight feedback loop (3-5 cycles)
-Run: bash /tests/test.sh 2>&1 || bash -c "cd / && pytest /tests/ -x 2>&1"
-Read the error output carefully.
-Fix ONLY what the test says is wrong — not what you think might be wrong.
-Re-run after each fix. Stop when tests pass.
+### Phase 3: VERIFY your work
+If /tests/ exists: run bash /tests/test.sh 2>&1 and iterate on failures.
+If /tests/ does NOT exist: verify MANUALLY:
+- Run your code and check the output matches what the instruction asks
+- Check all required files exist at the expected paths
+- Test edge cases mentioned in the instruction
+- Do a final sanity check: re-read the instruction, compare with what you built
 
 ### Phase 4: STUCK? — Reset and try differently
-If after 3 failed fix attempts for the same error:
+If after 3 failed attempts at the same approach:
 1. Run: git checkout . (reset all changes)
-2. Re-read the test expectations
+2. Re-read the task instruction from scratch
 3. Try a COMPLETELY different approach (different algorithm, different library, different structure)
 Do not keep patching a broken approach. Fresh start is faster.
 
 ## Progressive Complexity
-- Level 1: Hardcoded values, minimal logic (does the test even check this?)
+- Level 1: Hardcoded values, minimal logic
 - Level 2: Basic implementation handling main case
 - Level 3: Edge cases, error handling, optimizations
-Start at Level 1. Only go to Level 2 if Level 1 fails tests. Only go to Level 3 if Level 2 fails.
+Start at Level 1. Only go to Level 2 if it fails. Only go to Level 3 if Level 2 fails.
 
 ## Tool Usage
 Use tools proactively. When multiple tool calls are independent, execute them in parallel.
@@ -477,10 +486,10 @@ If repeating the same action more than twice:
 - Try a COMPLETELY different approach — not a variation, a DIFFERENT strategy
 
 ## Time Management
-If after 15 turns you haven't passed any tests:
-- Run tests to see current state
-- Focus on the EASIEST failing test first
-- Get partial credit rather than zero
+If after 15 turns you still haven't completed the task:
+- Focus on getting the core requirement right
+- Skip edge cases and optimizations
+- A partial working solution beats a perfect unfinished one
 
 ## Unfamiliar Tools
 When using an unfamiliar tool or library, read its docs first — run --help, check README.md. Never guess CLI flags.
