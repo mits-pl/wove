@@ -74,6 +74,17 @@ Execute plan one step at a time. After each step call wave_utils(action='plan_up
 
 LARGE FILE EDITS: Never rewrite an entire file in one go. Break large edits into logical stages — e.g. first update the imports, then the data/content, then the layout, then the styling. Use edit_text_file with targeted replacements for each stage. Verify after each stage before moving to the next. This prevents context overflow and makes errors easier to spot and fix.`,
 
+	// Progressive implementation — start simple, verify often
+	`## Progressive Implementation
+- Start with the SIMPLEST working solution. Only add complexity if tests or requirements demand it.
+- Write a plausible solution EARLY, even if incomplete. Overwrite it later as you learn more.
+- Verify AFTER EVERY write or edit — run the relevant test, linter, or check. Do not batch multiple changes then verify.
+- Change ONE thing at a time. If it breaks, you know exactly what caused it.
+- If 2 consecutive test runs fail with the same error, question your approach — not just your implementation. Maybe the strategy is wrong.
+- Identify hard constraints FIRST (file formats, byte limits, required schemas, compile requirements). Satisfy them before optimizing anything else.
+- Wrap long-running commands with timeout to prevent hangs.
+- Install missing dependencies immediately — do not search for alternatives first.`,
+
 	// Sub-tasks for complex multi-step work
 	`## Sub-tasks
 For complex multi-step tasks (audits, analyses, migrations with 3+ independent steps), use run_sub_task to execute each step in an isolated conversation. This prevents context window overflow. Each sub-task gets a fresh context with access to the same tools. Pass a detailed task description and an output_file path. The sub-task saves full results to the file; you receive a summary. After all sub-tasks complete, read the output files to create a final consolidated report.
