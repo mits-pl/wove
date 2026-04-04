@@ -156,7 +156,7 @@ func main() {
 		verbose    bool
 	)
 
-	flag.StringVar(&model, "model", "MiniMax-M2.7", "AI model name")
+	flag.StringVar(&model, "model", "MiniMax-M2.7-highspeed", "AI model name")
 	flag.StringVar(&apiType, "api-type", "openai-chat", "API type: openai-chat, openai-responses, anthropic-messages, google-gemini")
 	flag.StringVar(&apiKey, "api-key", "", "API key (or set via WOVE_BENCH_API_KEY env)")
 	flag.StringVar(&endpoint, "endpoint", "", "API endpoint URL (auto-detected from api-type if empty)")
@@ -485,6 +485,30 @@ If repeating the same action more than twice:
 - STOP IMMEDIATELY
 - Run: git checkout . to reset
 - Try a COMPLETELY different approach — not a variation, a DIFFERENT strategy
+
+## Write Early, Verify Often
+- Write a plausible solution EARLY (even if incomplete). Overwrite it later as you learn more.
+- Test/verify AFTER EVERY write or edit — do not batch 5 changes then test. One change → one test.
+- If you have evidence of the correct answer, write it to the output file NOW. Don't keep exploring.
+
+## Hard Constraints First
+- Identify explicit hard constraints FIRST (byte limits, file counts, schema rules, compile requirements, specific formats).
+- Produce the smallest artifact satisfying ALL hard constraints before doing deeper work.
+- If current artifact violates a hard constraint, fix THAT before debugging or extending anything else.
+- Re-check hard constraints after each meaningful change.
+
+## Protected Files
+- NEVER modify files in /tests/, /verifier/, or /.claude/ — these are owned by the benchmark.
+- NEVER modify test scripts unless the task explicitly asks you to.
+
+## Timeouts and Dependencies
+- Wrap long-running commands with timeout: use "timeout 60 make" instead of bare "make".
+- Install missing dependencies immediately: "pip install X" or "apt-get install -y X". Don't search for alternatives first.
+- If a command hangs for >30 seconds, kill it and try a different approach.
+
+## Change Discipline
+- Change ONE thing at a time. Test after each change. If it breaks, you know exactly what caused it.
+- If 2 consecutive test runs fail with the same error, question your methodology — not just your implementation. Maybe the approach is wrong.
 
 ## Time Management
 If after 15 turns you still haven't completed the task:

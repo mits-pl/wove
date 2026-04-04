@@ -222,7 +222,7 @@ class WoveAgent(BaseAgent):
     def _parse_model(self) -> tuple[str, str]:
         """Parse 'provider/model' format."""
         if not self.model_name:
-            return "minimax", "MiniMax-M2.7"
+            return "minimax", "MiniMax-M2.7-highspeed"
         if "/" in self.model_name:
             provider, model = self.model_name.split("/", 1)
             return provider.lower(), model
