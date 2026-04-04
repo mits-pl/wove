@@ -8,11 +8,15 @@
 
 # Wove
 
-**Local, autonomous developer agent with built-in browser and computer vision.**
+**Open-source AI coding agent. Desktop app. Bring your own model.**
 
-Wove is not a terminal with an AI chat. It's an autonomous agent that sees your screen, browses the web, runs commands, delegates sub-tasks, and orchestrates multi-step workflows — all running locally on your machine.
+AI coding tools today lock you into one model, one vendor, one monthly subscription. Your code goes through someone else's servers. You can't switch models when a cheaper one fits. You can't work offline. And you can't see what the tool actually does with your code.
 
-Built on the [Wave Terminal](https://github.com/wavetermdev/waveterm) engine (Go + Electron, Apache 2.0).
+Wove fixes this. It's a desktop app that connects directly to any AI provider with your own API key. It writes code, runs commands, browses the web, and verifies its own work — all locally on your machine. No proxy, no cloud agent, no vendor lock-in.
+
+Use Claude, GPT, Gemini, MiniMax, Ollama, or any OpenAI-compatible model. Switch between them in one click. Pay only for what you use.
+
+Built on [Wave Terminal](https://github.com/wavetermdev/waveterm) (Go + Electron). Apache 2.0.
 
 ## Download
 
@@ -28,120 +32,54 @@ Built on the [Wave Terminal](https://github.com/wavetermdev/waveterm) engine (Go
 
 [All releases](https://github.com/mits-pl/wove/releases)
 
-## What makes Wove different
+## Why Wove
 
-| Capability | Cursor / Copilot | Claude Code | Wove |
-|---|---|---|---|
-| Built-in browser with vision | No | No | **CDP capture + Set-of-Mark** |
-| Browser automation (click, type, navigate) | No | No | **Yes** |
-| Sub-task delegation (isolated context) | No | Yes (subagents) | **Yes (new tabs)** |
-| MCP native | No | Yes | **Yes (auto-detect)** |
-| Execution plans with persistence | No | No | **Yes** |
-| Project convention enforcement | Partial | .claude files | **WAVE.md + CLAUDE.md + .cursorrules** |
-| Code quality guardrails | No | Yes (prompt-level) | **Yes (prompt + tool-level enforcement)** |
-| Skills system (on-demand tools) | No | Slash commands | **SKILL.md + autocomplete** |
-| Multi-model BYOK | Limited | Anthropic only | **10 presets, any provider** |
-| Runs locally, no cloud agent | IDE extension | CLI | **Desktop app** |
-| Open source | No | No | **Apache 2.0** |
+**You own the whole stack.** Wove is a desktop app that talks directly to AI providers. Your code stays on your machine. Your API keys stay in an encrypted local keystore. There's no proxy, no telemetry requirement, no usage cap.
 
-## Core Capabilities
+**It actually does the work.** Wove doesn't just suggest code — it reads your project, writes files, runs tests, opens a browser to check the result, and fixes what's broken. When a task is too big, it splits it into sub-tasks with isolated context so nothing overflows.
 
-### Computer Vision & Web Automation
-Wove sees web pages through CDP-based snapshots with Set-of-Mark numbered markers. The agent identifies interactive elements, reads content, and automates the browser:
+**Any model, one interface.** Claude Opus for hard problems. GPT-5 Mini for quick tasks. MiniMax M2.7 for $3/month coding. Ollama for fully offline work. Switch in one click, same tools and guardrails everywhere.
 
-- **web_capture** — visual snapshot with numbered element markers and CSS selectors
-- **web_click** / **web_mouse_click** — click by selector or coordinates (CDP-based, works in iframes)
-- **web_type_input** — type into inputs with framework event dispatch
-- **web_exec_js** — execute JavaScript in page context
-- **web_open** / **web_navigate** — open and navigate browser widgets
-- **web_read_text** / **web_read_html** — extract content by CSS selector
-- **web_seo_audit** — full page audit (JSON-LD, OG, meta, headings, links)
+## What it does
 
-### Sub-task Orchestration
-Complex tasks (audits, migrations, multi-file refactors) are split into isolated sub-tasks. Each sub-task runs in a new tab with fresh context and full tool access, preventing context window overflow.
+### Writes and edits code
+Reads your project conventions (WAVE.md, CLAUDE.md), finds similar files for style reference, writes code that matches your codebase. Enforces read-before-edit at tool level — the AI physically cannot modify a file it hasn't read.
 
-```
-Parent task: "Full SEO audit of example.com"
-    |
-    +-- Sub-task 1: Technical audit → /tmp/seo/01-technical.md
-    +-- Sub-task 2: Content quality → /tmp/seo/02-content.md
-    +-- Sub-task 3: Schema markup  → /tmp/seo/03-schema.md
-    |
-    v
-Parent reads output files → generates consolidated report
-```
+### Runs and verifies
+Executes commands in a real terminal. Runs your test suite. Checks linter output. Won't say "done" without running at least one verification step. If large edits are needed, breaks them into stages instead of rewriting entire files.
 
-### MCP Integration
-Auto-detects `.mcp.json` in your project. AI gets direct access to your database schema, documentation, logs — any MCP-compatible data source.
+### Browses the web
+Built-in browser with CDP-based vision. The agent opens pages, reads content, clicks buttons, fills forms, takes screenshots with numbered element markers. Useful for testing web apps, scraping docs, or debugging frontends.
 
-### AI Planning System
-Multi-step execution plans with:
-- Concrete file paths and pattern references
-- Auto-appended steps: lint, review, test
-- Live progress panel
-- Plans survive restarts
+### Plans and delegates
+Creates execution plans with concrete file paths, tracks progress in a live panel. When tasks are complex (5+ files, multi-step migrations), automatically delegates to sub-tasks running in isolated tabs with fresh context.
 
-### Project Intelligence
-Reads WAVE.md, CLAUDE.md, .cursorrules automatically:
-- Tech stack injected into every request
-- Critical rules always present
-- Project tree on first message
-- Smart filtering by technology
+### Connects to your data
+Auto-detects MCP servers from `.mcp.json`. The AI gets direct access to your database schema, documentation, logs — any MCP-compatible data source.
 
-### Skills System
-Extensible skill definitions (SKILL.md files) with:
-- `invoke_skill` tool for on-demand loading
-- Slash command autocomplete in AI input (`/seo-audit`, `/seo-technical`, etc.)
-- Skills run autonomously end-to-end without confirmation prompts
+## Models
 
-### Code Quality Guardrails
-Wove enforces multiple layers of code quality to ensure generated code matches your project's conventions:
+| Provider | Models | Get API key |
+|----------|--------|-------------|
+| **Anthropic** | Claude Sonnet 4.6, Opus 4.6 | [console.anthropic.com](https://console.anthropic.com/) |
+| **OpenAI** | GPT-5 Mini, GPT-5.1 | [platform.openai.com](https://platform.openai.com/) |
+| **Google** | Gemini 3.0 Flash, Pro | [aistudio.google.com](https://aistudio.google.com/) |
+| **MiniMax** | M2.7, M2.7 High Speed | [platform.minimax.io](https://platform.minimax.io/) |
+| **xAI** | Grok 3 | [console.x.ai](https://console.x.ai/) |
+| **Ollama** | Any local model | [ollama.com](https://ollama.com/) |
+| **OpenRouter** | Any model | [openrouter.ai](https://openrouter.ai/) |
 
-- **Read-before-edit** — the AI must read a file before modifying it (enforced at tool level, not just prompt)
-- **Architecture matching** — find 2-3 similar files, study their patterns, match the style exactly
-- **Code discipline** — no unnecessary refactoring, no premature abstractions, no gold-plating beyond what was asked
-- **Security awareness** — OWASP-aware: parameterized queries, output escaping, no secrets in code
-- **Self-review** — after every write, re-read the file and compare with the reference for style drift
-- **Verification** — run linters and tests after code changes; never claim "done" without evidence
-- **Warm context** — technology-specific conventions from WAVE.md are re-injected when editing files of that type
-- **Sibling references** — when creating new files, an existing file from the same directory is automatically attached as a style reference
-- **Project instructions override** — WAVE.md/CLAUDE.md rules explicitly override the AI's default behavior
+Right-click the AI panel → **Quick Add Model** → paste your key. Done.
 
-### Smart Context Management
-Long coding sessions stay fast — Wove automatically manages the AI's context window:
+API keys are stored in an encrypted local keystore — never in config files or plain text.
 
-- **Screenshot stripping** — base64 images shown to the model once, then replaced with text element list in history
-- **Tool result compaction** — old tool outputs are truncated in API requests while chatstore keeps full data for UI
-- **Conversation compaction** — automatic cleanup when context grows too large
-- **Compressed screenshots** — 512px JPEG at quality 30 (~15-25KB instead of 50-80KB)
-- **Model switch protection** — switching models auto-clears chat to prevent format mismatches
+## Getting started
 
-### Widget Ownership & Cleanup
-Agent tracks which terminals and browsers it created. Closes them when done. Cannot close user's pre-existing widgets.
+### Download and run
 
-### Multi-Model Support (BYOK)
+Grab the latest release from the [downloads section](#download) above. Open the DMG, drag to Applications, launch.
 
-| Provider | Models |
-|---|---|
-| Anthropic | Claude Sonnet 4.6, Opus 4.6 |
-| OpenAI | GPT-5 Mini, GPT-5.1 |
-| Google | Gemini 3.0 Flash, Pro |
-| MiniMax | M2.7 |
-| Ollama | Any local model |
-| OpenRouter | Any model |
-
-### Session History
-Chat history persists per tab across restarts, with a visual banner showing previous work.
-
-## Getting Started
-
-### Requirements
-- macOS 11+, Windows 10 1809+, or Linux (glibc-2.28+)
-- Node.js 22 LTS
-- Go 1.25+
-- [Task](https://taskfile.dev/) build tool
-
-### Build and run
+### Build from source
 
 ```bash
 git clone https://github.com/mits-pl/wove.git
@@ -150,33 +88,33 @@ task init
 task dev
 ```
 
-### Set up an AI model (required)
+Requires: macOS 11+ / Windows 10+ / Linux (glibc-2.28+), Node.js 22 LTS, Go 1.25+, [Task](https://taskfile.dev/)
 
-Wove needs an AI model to work. The fastest way to get started:
+### Set up your model
 
-1. Open Wove and find the **AI panel** on the right side (or press `Alt+Shift+A`)
-2. **Right-click** anywhere in the AI panel to open the context menu
-3. Go to **Quick Add Model** and pick your provider
-4. Paste your API key when prompted — done
+1. Open Wove → find the **AI panel** on the right (or `Alt+Shift+A`)
+2. Right-click → **Quick Add Model** → pick your provider
+3. Paste your API key → done
 
-| Provider | What you need | Get API key at |
-|----------|--------------|----------------|
-| **Claude (Anthropic)** | API key | [console.anthropic.com](https://console.anthropic.com/) |
-| **GPT-5 (OpenAI)** | API key | [platform.openai.com](https://platform.openai.com/) |
-| **Gemini (Google)** | API key (free tier available) | [aistudio.google.com](https://aistudio.google.com/) |
-| **MiniMax** | API key | [platform.minimaxi.com](https://platform.minimaxi.com/) |
-| **OpenRouter** | API key (access any model) | [openrouter.ai](https://openrouter.ai/) |
-| **Ollama (Local)** | Ollama running (`ollama serve`) | [ollama.com](https://ollama.com/) |
+### Configure your project
 
-API keys are stored securely in an encrypted local keystore — never in config files or plain text.
+Create `WAVE.md` in your project root:
 
-**Recommended for coding:** Claude Sonnet 4.6 or GPT-5.1 with tool support enabled.
+```markdown
+## Project
+My App — Laravel 11, Inertia.js, Vue 3
 
-You can also click **Configure Modes** in the same context menu to open the JSON editor and add or modify models directly.
+## Conventions
+- Always use Form Request classes for validation
+- Use Eloquent scopes, not raw queries
+- Run vendor/bin/pint after changes
+```
 
-### Advanced: manual model configuration
+Wove reads this on every request and enforces your rules at tool level.
 
-For custom endpoints or models not in Quick Add, create `~/.config/woveterm/waveai.json`:
+### Advanced: custom model endpoints
+
+For models not in Quick Add, create `~/.config/woveterm/waveai.json`:
 
 ```json
 {
@@ -191,52 +129,46 @@ For custom endpoints or models not in Quick Add, create `~/.config/woveterm/wave
 }
 ```
 
-Supported `ai:apitype` values: `anthropic-messages`, `openai-responses`, `openai-chat`, `google-gemini`
+Supported API types: `anthropic-messages`, `openai-responses`, `openai-chat`, `google-gemini`
 
-### Project Instructions
-Create `WAVE.md` in your project root:
-```markdown
-## Project
-My App — Laravel 11, Inertia.js, Vue 3
-
-## Conventions
-- Always use Form Request classes for validation
-- Use Eloquent scopes, not raw queries
-- Run vendor/bin/pint after changes
-```
-
-## Architecture
+## How it works
 
 ```
-User message
-    |
-    v
-[Project Stack] -> "Laravel + Inertia + Vue"
-[Critical Rules] -> "must write tests, must use PHPDoc"
-[MCP Context]   -> database schema, app info
-[Active Plan]   -> what step to execute next
-    |
-    v
-Agent: plan -> read code -> write -> review -> test -> lint
-    |
-    +-- needs web data? -> web_open -> web_capture -> web_read_text
-    +-- complex task? -> run_sub_task (isolated tab)
-    +-- done? -> close_widget (cleanup)
+Your message
+    ↓
+[Project rules from WAVE.md/CLAUDE.md]
+[MCP context: database schema, docs]
+[Active plan: current step]
+    ↓
+Agent: plan → read → write → verify → test
+    ↓
+    ├── needs web data? → opens browser, reads page
+    ├── complex task? → delegates to sub-task (isolated tab)
+    └── done? → closes terminals and browsers it opened
 ```
 
-## Built On
+## Guardrails
 
-Wove is built on [Wave Terminal](https://github.com/wavetermdev/waveterm) by [Command Line Inc.](https://www.commandline.dev/), licensed under Apache License 2.0.
+Not just prompt suggestions — enforced at tool level:
 
-See [MODIFICATIONS.md](MODIFICATIONS.md) for a complete list of changes from upstream.
+- **Read-before-edit** — tool rejects edits on unread files
+- **Large file protection** — blocks full rewrites of files >200 lines, forces targeted edits
+- **Architecture matching** — finds similar files, copies their patterns
+- **Doom loop detection** — detects repeating tool calls, forces strategy change
+- **Structured compaction** — when context grows, preserves action history instead of losing it
+- **Security awareness** — parameterized queries, output escaping, no secrets in code
+
+## Built on
+
+[Wave Terminal](https://github.com/wavetermdev/waveterm) by [Command Line Inc.](https://www.commandline.dev/), Apache License 2.0.
+
+See [MODIFICATIONS.md](MODIFICATIONS.md) for changes from upstream.
 
 ## Contributing
 
 Issues and PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Support
-
-If you find Wove useful, consider buying us a coffee:
 
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?logo=buymeacoffee)](https://buymeacoffee.com/wove)
 
