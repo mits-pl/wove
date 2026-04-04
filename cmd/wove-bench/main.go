@@ -363,7 +363,7 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 	// 1. Agent stopped in <5 turns (barely tried)
 	// 2. Agent never wrote any output file (nothing to verify)
 	// 3. Agent used <50% of max turns and didn't verify
-	maxNudges := 3
+	maxNudges := 1 // was 3, reduced to save time for actual work
 	for nudge := 0; nudge < maxNudges && aiMetrics != nil && ctx.Err() == nil; nudge++ {
 		shouldNudge := false
 		var nudgeMsg string
@@ -560,7 +560,13 @@ If repeating the same action more than twice:
 - Change ONE thing at a time. Test after each change. If it breaks, you know exactly what caused it.
 - If 2 consecutive test runs fail with the same error, question your methodology — not just your implementation. Maybe the approach is wrong.
 
-## Time Management
+## Time Budget
+You have MAXIMUM 15 minutes. Budget your time:
+- Minutes 0-3: Understand the task (read files, check tests)
+- Minutes 3-10: Implement and verify
+- Minutes 10-13: Fix remaining issues
+- Minutes 13-15: Final verification only — no new approaches
+Do NOT use web_search after 10 minutes — it wastes time you need for implementation.
 If after 15 turns you still haven't completed the task:
 - Focus on getting the core requirement right
 - Skip edge cases and optimizations
