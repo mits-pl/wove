@@ -477,6 +477,7 @@ func RunAIChat(ctx context.Context, sseHandler *sse.SSEHandlerCh, backend UseCha
 	}
 	firstStep := true
 	var cont *uctypes.WaveContinueResponse
+	var actionHistory []string // structured history for ForgeCode-style compaction summaries
 	for {
 		// Compact conversation when content exceeds threshold (prevents context overflow on long sessions)
 		compactThreshold := chatOpts.CompactThreshold
@@ -487,6 +488,20 @@ func RunAIChat(ctx context.Context, sseHandler *sse.SSEHandlerCh, backend UseCha
 			compacted := chatstore.DefaultChatStore.CompactConversation(chatOpts.ChatId, compactThreshold, 4, 1000, 500)
 			if compacted > 0 {
 				log.Printf("[context] compacted %d messages, total was %d bytes\n", compacted, totalSize)
+				// Inject structured history summary so agent remembers what it did
+				if len(actionHistory) > 0 {
+					summary := "<compacted_history>\nPrevious actions (older messages were compacted to save context):\n"
+					// Keep last 30 actions max
+					start := 0
+					if len(actionHistory) > 30 {
+						start = len(actionHistory) - 30
+					}
+					for _, action := range actionHistory[start:] {
+						summary += "- " + action + "\n"
+					}
+					summary += "</compacted_history>"
+					chatOpts.SystemPrompt = append(chatOpts.SystemPrompt, summary)
+				}
 				// Notify frontend about context compaction
 				_ = sseHandler.AiMsgData("data-compact", "", map[string]any{
 					"compacted_messages": compacted,
@@ -568,6 +583,27 @@ func RunAIChat(ctx context.Context, sseHandler *sse.SSEHandlerCh, backend UseCha
 		}
 		if stopReason != nil && stopReason.Kind == uctypes.StopKindToolUse {
 			metrics.ToolUseCount += len(stopReason.ToolCalls)
+			// Track tool calls for structured compaction summary
+			for _, tc := range stopReason.ToolCalls {
+				argSummary := ""
+				if inputMap, ok := tc.Input.(map[string]any); ok {
+					// Extract key argument for summary
+					for _, key := range []string{"command", "filename", "path", "pattern"} {
+						if v, ok := inputMap[key].(string); ok && v != "" {
+							if len(v) > 80 {
+								v = v[:80] + "..."
+							}
+							argSummary = v
+							break
+						}
+					}
+				}
+				if argSummary != "" {
+					actionHistory = append(actionHistory, fmt.Sprintf("%s: %s", tc.Name, argSummary))
+				} else {
+					actionHistory = append(actionHistory, tc.Name)
+				}
+			}
 			modifiedExts := processAllToolCalls(backend, stopReason, chatOpts, sseHandler, metrics)
 			// Compact tool results to prevent context window overflow.
 			// 1. Truncate ALL oversized tool results (>5KB) to 2KB regardless of recency
