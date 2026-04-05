@@ -792,6 +792,8 @@ If repeating the same action more than twice:
 - Prefer pip/pip3 for Python packages, npm for Node — they don't hold system locks.
 - If apt-get hangs or you see "dpkg lock", KILL it immediately: pkill -9 apt-get; rm -f /var/lib/dpkg/lock-frontend.
 - Bash tool default timeout is 60s per command. Pass timeout_sec parameter for longer ops.
+- DO NOT pass timeout_sec < 30 unless the command is truly trivial. For cp, rm, builds, tests use 120+.
+- For package installs (pip, npm, apt) use timeout_sec=180.
 
 ## Change Discipline
 - Change ONE thing at a time. Test after each change. If it breaks, you know exactly what caused it.

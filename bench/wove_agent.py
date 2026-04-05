@@ -138,19 +138,16 @@ class WoveAgent(BaseAgent):
                 f"or create .env file with {env_key}=xxx"
             )
 
-        # --- Cross-task error memory: build hints from previous failures ---
+        # --- Cross-task error memory: DISABLED ---
+        # Hints from failed tasks were contaminating unrelated subsequent tasks.
+        # Set WOVE_ENABLE_ERROR_MEMORY=1 to re-enable.
         error_hints = ""
-        if _error_memory:
-            hints = _error_memory[-10:]  # last 10 errors
-            error_lines = []
-            for h in hints:
-                error_lines.append(f"- Task '{h['task']}': {h['error']}")
+        if os.environ.get("WOVE_ENABLE_ERROR_MEMORY") and _error_memory:
+            hints = _error_memory[-10:]
+            error_lines = [f"- Task '{h['task']}': {h['error']}" for h in hints]
             error_hints = (
-                "\n\n<previous_task_errors>\n"
-                "Other tasks in this benchmark session failed for these reasons. "
-                "Avoid making the same mistakes:\n"
-                + "\n".join(error_lines)
-                + "\n</previous_task_errors>"
+                "\n\n<previous_task_errors>\nAvoid these mistakes from earlier tasks:\n"
+                + "\n".join(error_lines) + "\n</previous_task_errors>"
             )
 
         # Build command
