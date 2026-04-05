@@ -20,15 +20,16 @@ import (
 )
 
 type terminalSession struct {
-	mu       sync.Mutex
-	ptyFile  pty.Pty
-	cmd      *exec.Cmd
-	buffer   []byte
-	maxBuf   int
-	cwd      string
-	closed   bool
-	marker   int
-	markerMu sync.Mutex
+	mu         sync.Mutex
+	ptyFile    pty.Pty
+	cmd        *exec.Cmd
+	buffer     []byte
+	bufOffset  int64 // absolute byte offset of buffer[0] from session start
+	maxBuf     int
+	cwd        string
+	closed     bool
+	marker     int
+	markerMu   sync.Mutex
 }
 
 func newTerminalSession(cwd string) (*terminalSession, error) {
@@ -76,8 +77,10 @@ func (ts *terminalSession) readLoop() {
 		ts.mu.Lock()
 		ts.buffer = append(ts.buffer, buf[:n]...)
 		if len(ts.buffer) > ts.maxBuf {
-			// Keep last maxBuf bytes
-			ts.buffer = ts.buffer[len(ts.buffer)-ts.maxBuf:]
+			// Keep last maxBuf bytes; track how many we dropped
+			drop := len(ts.buffer) - ts.maxBuf
+			ts.buffer = ts.buffer[drop:]
+			ts.bufOffset += int64(drop)
 		}
 		ts.mu.Unlock()
 	}
@@ -104,9 +107,9 @@ func (ts *terminalSession) runCommand(cmd string, timeoutSec int) (string, bool,
 	marker := fmt.Sprintf("__DONE_%d__", ts.marker)
 	ts.markerMu.Unlock()
 
-	// Record buffer position before sending
+	// Record absolute byte offset before sending (survives buffer truncation)
 	ts.mu.Lock()
-	startPos := len(ts.buffer)
+	startAbs := ts.bufOffset + int64(len(ts.buffer))
 	ts.mu.Unlock()
 
 	// Send command + marker
@@ -124,7 +127,13 @@ func (ts *terminalSession) runCommand(cmd string, timeoutSec int) (string, bool,
 			ts.mu.Unlock()
 			return "", false, fmt.Errorf("terminal closed during command")
 		}
-		buf := string(ts.buffer[startPos:])
+		// Convert absolute offset to current buffer-relative position
+		relStart := startAbs - ts.bufOffset
+		if relStart < 0 {
+			// Data was truncated; start from buffer head
+			relStart = 0
+		}
+		buf := string(ts.buffer[relStart:])
 		ts.mu.Unlock()
 
 		if idx := strings.Index(buf, marker+" "); idx >= 0 {
@@ -138,12 +147,16 @@ func (ts *terminalSession) runCommand(cmd string, timeoutSec int) (string, bool,
 			output = strings.TrimRight(output, "\r\n$ ")
 			return output, true, nil
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(30 * time.Millisecond)
 	}
 
 	// Timeout — return what we have
 	ts.mu.Lock()
-	out := string(ts.buffer[startPos:])
+	relStart := startAbs - ts.bufOffset
+	if relStart < 0 {
+		relStart = 0
+	}
+	out := string(ts.buffer[relStart:])
 	ts.mu.Unlock()
 	return out, false, nil
 }
