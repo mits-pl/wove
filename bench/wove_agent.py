@@ -66,15 +66,19 @@ class WoveAgent(BaseAgent):
 
     async def setup(self, environment: BaseEnvironment) -> None:
         """Upload and install wove-bench binary in the container."""
-        # Install ONLY essential tools. Skip apt-get update (slow, usually unnecessary).
-        # Skip build-essential/git — most containers have them; agent can install if needed.
-        # Install curl + ca-certificates (very small), then uv via pip (no apt).
+        # Check which essential tools are missing; only install those.
+        # Prevents agent/verifier from spending turns on apt-get (apt-lock contention).
         await environment.exec(
-            "(which curl >/dev/null 2>&1 || apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null 2>&1) || "
-            "(which curl >/dev/null 2>&1 || apk add --no-cache ca-certificates curl >/dev/null 2>&1) || true",
-            user="root", timeout_sec=60,
+            "MISSING=''; "
+            "for cmd in curl gcc make git; do which $cmd >/dev/null 2>&1 || MISSING=\"$MISSING $cmd\"; done; "
+            "if [ -n \"$MISSING\" ]; then "
+            "  MISSING_APT=$(echo $MISSING | sed 's/gcc/build-essential/'); "
+            "  apt-get install -y -qq --no-install-recommends ca-certificates $MISSING_APT >/dev/null 2>&1 || "
+            "  apk add --no-cache ca-certificates $MISSING >/dev/null 2>&1 || true; "
+            "fi",
+            user="root", timeout_sec=120,
         )
-        # Install uv via pip if it's not already there (much faster than curl script)
+        # Install uv via pip if missing (fast, no apt-lock)
         await environment.exec(
             "which uv >/dev/null 2>&1 || pip install --quiet --break-system-packages uv 2>/dev/null || pip3 install --quiet --break-system-packages uv 2>/dev/null || true",
             user="root", timeout_sec=30,
