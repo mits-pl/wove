@@ -192,19 +192,28 @@ class WoveAgent(BaseAgent):
             )
         except Exception as e:
             self.logger.warning(f"wove-bench exec exception: {e}")
-            # Try to pull partial log from container
+            # Always write at least the exception info
             try:
-                partial = await environment.exec("tail -200 /tmp/wove.log", timeout_sec=10)
-                log_path = self.logs_dir / "agent.log"
-                log_path.write_text(
-                    f"=== EXCEPTION: {e} ===\n\n=== LAST 200 LINES OF /tmp/wove.log ===\n{partial.stdout}\n"
-                )
-                # Pull trace too
-                trace_partial = await environment.exec("cat /tmp/wove-trace.jsonl", timeout_sec=10)
+                (self.logs_dir / "agent.log").write_text(f"=== EXCEPTION: {e} ===\n")
+            except Exception:
+                pass
+            # Try to pull log (separate try so trace recovery runs even if log fails)
+            try:
+                partial = await environment.exec("tail -300 /tmp/wove.log", timeout_sec=15)
+                if partial.stdout:
+                    (self.logs_dir / "agent.log").write_text(
+                        f"=== EXCEPTION: {e} ===\n\n=== /tmp/wove.log (tail 300) ===\n{partial.stdout}\n"
+                    )
+            except Exception as e2:
+                self.logger.warning(f"could not pull wove.log: {e2}")
+            # Try trace separately
+            try:
+                trace_partial = await environment.exec("cat /tmp/wove-trace.jsonl", timeout_sec=15)
                 if trace_partial.return_code == 0 and trace_partial.stdout:
                     (self.logs_dir / "tool-trace.jsonl").write_text(trace_partial.stdout)
+                    self.logger.info(f"recovered trace: {trace_partial.stdout.count(chr(10))} lines")
             except Exception as e2:
-                self.logger.warning(f"could not recover log: {e2}")
+                self.logger.warning(f"could not pull trace: {e2}")
             raise
 
         self.logger.info(f"wove-bench exit: rc={result.return_code}")
