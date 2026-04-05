@@ -181,6 +181,145 @@ func (rt *readTracker) wasRead(path string) bool {
 	return rt.readFiles[path]
 }
 
+// --- Tool call tracer ---
+// Writes JSONL trace of each tool call: name, args, result (truncated), duration, success.
+
+type toolTracer struct {
+	mu   sync.Mutex
+	file *os.File
+	seq  int
+}
+
+func newToolTracer(path string) *toolTracer {
+	if path == "" {
+		return nil
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		log.Printf("[tracer] failed to create %s: %v\n", path, err)
+		return nil
+	}
+	return &toolTracer{file: f}
+}
+
+func (tr *toolTracer) record(name string, args any, result string, err error, durMs int64) {
+	if tr == nil {
+		return
+	}
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	tr.seq++
+	truncResult := result
+	if len(truncResult) > 500 {
+		truncResult = truncResult[:500] + "...[truncated]"
+	}
+	errStr := ""
+	if err != nil {
+		errStr = err.Error()
+		if len(errStr) > 500 {
+			errStr = errStr[:500] + "...[truncated]"
+		}
+	}
+	entry := map[string]any{
+		"seq":         tr.seq,
+		"t_ms":        time.Now().UnixMilli(),
+		"tool":        name,
+		"args":        args,
+		"result":      truncResult,
+		"error":       errStr,
+		"duration_ms": durMs,
+	}
+	data, _ := json.Marshal(entry)
+	tr.file.Write(data)
+	tr.file.Write([]byte("\n"))
+}
+
+func (tr *toolTracer) close() {
+	if tr != nil && tr.file != nil {
+		tr.file.Close()
+	}
+}
+
+func wrapTool(tr *toolTracer, name string, cb func(any) (string, error)) func(any) (string, error) {
+	if tr == nil {
+		return cb
+	}
+	return func(input any) (string, error) {
+		start := time.Now()
+		result, err := cb(input)
+		tr.record(name, input, result, err, time.Since(start).Milliseconds())
+		return result, err
+	}
+}
+
+// --- Todo list tracker ---
+// In-memory todo list. Agent replaces the full list on each write (Claude-Code semantics).
+
+type todoItem struct {
+	Content string `json:"content"`
+	Status  string `json:"status"` // pending | in_progress | completed
+}
+
+type todoTracker struct {
+	mu    sync.Mutex
+	items []todoItem
+}
+
+func newTodoTracker() *todoTracker { return &todoTracker{} }
+
+func (tt *todoTracker) set(items []todoItem) {
+	tt.mu.Lock()
+	defer tt.mu.Unlock()
+	tt.items = items
+}
+
+func (tt *todoTracker) render() string {
+	tt.mu.Lock()
+	defer tt.mu.Unlock()
+	if len(tt.items) == 0 {
+		return "(no todos)"
+	}
+	var sb strings.Builder
+	sb.WriteString("<todos>\n")
+	for i, t := range tt.items {
+		mark := "[ ]"
+		switch t.Status {
+		case "in_progress":
+			mark = "[~]"
+		case "completed":
+			mark = "[x]"
+		}
+		fmt.Fprintf(&sb, "%d. %s %s\n", i+1, mark, t.Content)
+	}
+	sb.WriteString("</todos>")
+	return sb.String()
+}
+
+// --- Doom-loop alternative strategy injection ---
+// When a doom loop is detected, inject tool-specific alternatives instead of a generic nudge.
+func doomLoopAlternatives(tool string, lastArg string) string {
+	switch tool {
+	case "bash":
+		return "- The command failed/looped 3x. Check if the binary is installed: `which X`.\n" +
+			"- Read its docs: `X --help 2>&1 | head -40` or `man X`.\n" +
+			"- Try a DIFFERENT tool entirely (python instead of awk, sed instead of python).\n" +
+			"- If file paths are involved, verify they exist with `ls -la`.\n" +
+			"- Wrap with `timeout 30` if it might hang."
+	case "edit_file":
+		return "- Your old_string never matches. Re-read the file with read_file to see CURRENT content.\n" +
+			"- The file may have changed, or your old_string has wrong whitespace/indentation.\n" +
+			"- Try a SHORTER, more unique old_string (one distinctive line).\n" +
+			"- Or rewrite the whole file with write_file if it's small."
+	case "grep":
+		return "- Pattern found nothing 3x. Loosen the regex or search for a sub-string.\n" +
+			"- Use `-F` for literal strings (no regex metacharacters).\n" +
+			"- Search a parent directory — you may be in the wrong path.\n" +
+			"- Use `list_dir` or `find` first to see what files exist."
+	default:
+		return "- Try a COMPLETELY different approach, not a variation of the same strategy."
+	}
+}
+
 // --- Error reflection wrapper ---
 // Wraps tool errors with reflection prompts.
 
@@ -216,7 +355,13 @@ func main() {
 		cwd        string
 		systemFile string
 		outputFile string
+		traceFile  string
 		verbose    bool
+		noPty      bool
+		noXMLRead  bool
+		noWeb      bool
+		noRepoMap  bool
+		noTodo     bool
 	)
 
 	flag.StringVar(&model, "model", "MiniMax-M2.7-highspeed", "AI model name")
@@ -228,7 +373,13 @@ func main() {
 	flag.StringVar(&cwd, "cwd", "", "Working directory for tool execution (default: current dir)")
 	flag.StringVar(&systemFile, "system-prompt-file", "", "File containing additional system prompt")
 	flag.StringVar(&outputFile, "output", "", "Write metrics JSON to this file")
+	flag.StringVar(&traceFile, "trace", "", "Write JSONL tool-call trace to this file")
 	flag.BoolVar(&verbose, "verbose", false, "Print SSE stream to stderr")
+	flag.BoolVar(&noPty, "no-pty", false, "Disable persistent PTY terminal (use stateless bash)")
+	flag.BoolVar(&noXMLRead, "no-xml-read", false, "Use plain-text read_file output (no XML wrapping)")
+	flag.BoolVar(&noWeb, "no-web", false, "Disable web_search and web_fetch tools")
+	flag.BoolVar(&noRepoMap, "no-repo-map", false, "Disable repo_map tool")
+	flag.BoolVar(&noTodo, "no-todo", false, "Disable todo_write tool")
 	flag.Parse()
 
 	if apiKey == "" {
@@ -265,6 +416,12 @@ func main() {
 		Instruction: instruction,
 		SystemFile:  systemFile,
 		Verbose:     verbose,
+		NoPty:       noPty,
+		NoXMLRead:   noXMLRead,
+		NoWeb:       noWeb,
+		NoRepoMap:   noRepoMap,
+		NoTodo:      noTodo,
+		TraceFile:   traceFile,
 	})
 
 	metricsJSON, _ := json.MarshalIndent(metrics, "", "  ")
@@ -301,6 +458,12 @@ type agentConfig struct {
 	Instruction string
 	SystemFile  string
 	Verbose     bool
+	NoPty       bool
+	NoXMLRead   bool
+	NoWeb       bool
+	NoRepoMap   bool
+	NoTodo      bool
+	TraceFile   string
 }
 
 func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
@@ -309,16 +472,36 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 	doomDetector := newDoomLoopDetector()
 	readFiles := newReadTracker()
 	writes := newWriteTracker()
-	// Create persistent terminal session
-	termSession, termErr := newTerminalSession(cfg.CWD)
-	if termErr != nil {
-		log.Printf("[terminal] failed to create session: %v, falling back to stateless bash\n", termErr)
+	todos := newTodoTracker()
+	tracer := newToolTracer(cfg.TraceFile)
+	if tracer != nil {
+		defer tracer.close()
 	}
-	if termSession != nil {
-		defer termSession.close()
+	// Create persistent terminal session (unless disabled)
+	var termSession *terminalSession
+	if !cfg.NoPty {
+		var termErr error
+		termSession, termErr = newTerminalSession(cfg.CWD)
+		if termErr != nil {
+			log.Printf("[terminal] failed to create session: %v, falling back to stateless bash\n", termErr)
+		}
+		if termSession != nil {
+			defer termSession.close()
+		}
 	}
 
-	tools := buildStandaloneTools(cfg.CWD, doomDetector, readFiles, writes, termSession)
+	tools := buildStandaloneTools(cfg.CWD, doomDetector, readFiles, writes, termSession, todos, toolOpts{
+		NoXMLRead: cfg.NoXMLRead,
+		NoWeb:     cfg.NoWeb,
+		NoRepoMap: cfg.NoRepoMap,
+		NoTodo:    cfg.NoTodo,
+	})
+	// Wrap each tool callback with tracer
+	if tracer != nil {
+		for i := range tools {
+			tools[i].ToolTextCallback = wrapTool(tracer, tools[i].Name, tools[i].ToolTextCallback)
+		}
+	}
 
 	systemPrompts := []string{buildSystemPrompt(cfg.CWD)}
 	if cfg.SystemFile != "" {
@@ -523,13 +706,18 @@ Be concise — lead with actions and results, not explanations.
 ## Environment
 - Working directory: %s
 - Platform: Linux (Docker container)
-- Tools: bash (persistent), term_send_input, term_get_scrollback, read_file, write_file, edit_file, grep, list_dir, repo_map, web_search, web_fetch
+- Tools: bash (persistent), term_send_input, term_get_scrollback, read_file, write_file, edit_file, grep, list_dir, repo_map, web_search, web_fetch, todo_write
 - Act autonomously — never ask for confirmation, never stop to ask "should I continue?"
 - This conversation has unlimited context. Do NOT stop until the objective is fully achieved.
 - Git is initialized for checkpointing. If your approach fails after 3 attempts, run: git checkout . to reset and try a COMPLETELY different strategy.
 - NOTE: Test files at /tests/ may NOT exist during your execution. They are run AFTER you finish by an external verifier. You will NOT be able to read or run them. Focus on implementing the solution correctly based on the task instruction.
 
 ## Strategy (CRITICAL — follow this exact order)
+
+### Phase 0: PLAN (1 turn, MANDATORY)
+Before anything else, call todo_write with 3-7 concrete steps breaking down the task. Mark the first as in_progress.
+Update the list after each step: set the next one to in_progress, mark the finished one completed.
+This keeps you on track and prevents drift. Do NOT skip this.
 
 ### Phase 1: UNDERSTAND (1-3 turns)
 This is the MOST IMPORTANT phase. Invest time here to save time later.
@@ -599,8 +787,11 @@ If repeating the same action more than twice:
 
 ## Timeouts and Dependencies
 - Wrap long-running commands with timeout: use "timeout 60 make" instead of bare "make".
-- Install missing dependencies immediately: "pip install X" or "apt-get install -y X". Don't search for alternatives first.
-- If a command hangs for >30 seconds, kill it and try a different approach.
+- CRITICAL: curl, git, uv, uvx, gcc, make are ALREADY INSTALLED. Do NOT apt-get install them — check with 'which X' first.
+- AVOID apt-get install at all costs — it holds dpkg lock and can hang. If you MUST install via apt, wrap with "timeout 60" and check for already-installed binaries FIRST with 'which X' or 'command -v X'.
+- Prefer pip/pip3 for Python packages, npm for Node — they don't hold system locks.
+- If apt-get hangs or you see "dpkg lock", KILL it immediately: pkill -9 apt-get; rm -f /var/lib/dpkg/lock-frontend.
+- Bash tool default timeout is 60s per command. Pass timeout_sec parameter for longer ops.
 
 ## Change Discipline
 - Change ONE thing at a time. Test after each change. If it breaks, you know exactly what caused it.
@@ -634,8 +825,15 @@ If you wrote code but didn't test it, YOU ARE NOT DONE.`, cwd)
 }
 
 // buildStandaloneTools creates filesystem/shell tools with doom-loop detection and read-before-edit enforcement.
-func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker, writes *writeTracker, term *terminalSession) []uctypes.ToolDefinition {
-	return []uctypes.ToolDefinition{
+type toolOpts struct {
+	NoXMLRead bool
+	NoWeb     bool
+	NoRepoMap bool
+	NoTodo    bool
+}
+
+func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker, writes *writeTracker, term *terminalSession, todos *todoTracker, opts toolOpts) []uctypes.ToolDefinition {
+	all := []uctypes.ToolDefinition{
 		{
 			Name:        "bash",
 			Description: "Execute a bash command in a PERSISTENT terminal session. State (cd, exports, venv, bg processes) is preserved across calls. Use for running tests, git commands, build tools.",
@@ -709,7 +907,7 @@ func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker
 				},
 				"required": []any{"path"},
 			},
-			ToolTextCallback: makeReadFileTool(cwd, doom, reads),
+			ToolTextCallback: makeReadFileTool(cwd, doom, reads, opts.NoXMLRead),
 		},
 		{
 			Name:        "write_file",
@@ -838,6 +1036,85 @@ func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker
 			},
 			ToolTextCallback: makeWebFetchTool(),
 		},
+		{
+			Name:        "todo_write",
+			Description: "Maintain a plan as a todo list. ALWAYS call this FIRST to break the task into 3-7 concrete steps. Update after each step: set in_progress when starting, completed when done. Replaces the full list on each call.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"todos": map[string]any{
+						"type":        "array",
+						"description": "Full list of todos (replaces previous list)",
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"content": map[string]any{"type": "string", "description": "What to do"},
+								"status":  map[string]any{"type": "string", "enum": []any{"pending", "in_progress", "completed"}},
+							},
+							"required": []any{"content", "status"},
+						},
+					},
+				},
+				"required": []any{"todos"},
+			},
+			ToolTextCallback: makeTodoWriteTool(todos),
+		},
+	}
+	// Filter based on opts
+	filtered := make([]uctypes.ToolDefinition, 0, len(all))
+	for _, t := range all {
+		switch t.Name {
+		case "web_search", "web_fetch":
+			if opts.NoWeb {
+				continue
+			}
+		case "repo_map":
+			if opts.NoRepoMap {
+				continue
+			}
+		case "todo_write":
+			if opts.NoTodo {
+				continue
+			}
+		case "term_send_input", "term_get_scrollback":
+			if term == nil {
+				continue
+			}
+		}
+		filtered = append(filtered, t)
+	}
+	return filtered
+}
+
+func makeTodoWriteTool(todos *todoTracker) func(any) (string, error) {
+	return func(input any) (string, error) {
+		m, ok := input.(map[string]any)
+		if !ok {
+			return "", fmt.Errorf("invalid input")
+		}
+		raw, ok := m["todos"].([]any)
+		if !ok {
+			return "", fmt.Errorf("todos must be an array")
+		}
+		items := make([]todoItem, 0, len(raw))
+		for _, e := range raw {
+			em, ok := e.(map[string]any)
+			if !ok {
+				continue
+			}
+			content, _ := em["content"].(string)
+			status, _ := em["status"].(string)
+			if content == "" {
+				continue
+			}
+			if status == "" {
+				status = "pending"
+			}
+			items = append(items, todoItem{Content: content, Status: status})
+		}
+		todos.set(items)
+		log.Printf("[tool:todo_write] %d items\n", len(items))
+		return todos.render(), nil
 	}
 }
 
@@ -885,10 +1162,10 @@ func makeBashTool(cwd string, doom *doomLoopDetector, term *terminalSession) fun
 
 		if doom.record("bash", truncateForHash(command)) {
 			rollbackCheckpoint(cwd)
-			return "<DOOM_LOOP_DETECTED>You repeated the same bash command 3 times. All file changes have been ROLLED BACK to the last checkpoint. You MUST try a COMPLETELY DIFFERENT approach now. Do not retry the same strategy.</DOOM_LOOP_DETECTED>", nil
+			return "<DOOM_LOOP_DETECTED>You ran the same bash command 3 times. All file changes ROLLED BACK to last checkpoint. Alternatives to try:\n" + doomLoopAlternatives("bash", command) + "\nDo NOT retry the same command.</DOOM_LOOP_DETECTED>", nil
 		}
 
-		timeoutSec := 120
+		timeoutSec := 60
 		if ts, ok := getFloat(input, "timeout_sec"); ok && ts > 0 {
 			timeoutSec = int(ts)
 		}
@@ -980,7 +1257,7 @@ func makeTermGetScrollbackTool(term *terminalSession) func(any) (string, error) 
 	}
 }
 
-func makeReadFileTool(cwd string, doom *doomLoopDetector, reads *readTracker) func(any) (string, error) {
+func makeReadFileTool(cwd string, doom *doomLoopDetector, reads *readTracker, plain bool) func(any) (string, error) {
 	return func(input any) (string, error) {
 		path := getStr(input, "path")
 		if path == "" {
@@ -1021,21 +1298,29 @@ func makeReadFileTool(cwd string, doom *doomLoopDetector, reads *readTracker) fu
 		}
 
 		var sb strings.Builder
-		// XML-structured output with metadata attributes
-		// Model sees total_lines vs display_lines — knows exactly if truncated
-		fmt.Fprintf(&sb, "<file path=\"%s\" display_lines=\"%d-%d\" total_lines=\"%d\"", path, offset+1, end, len(lines))
-		if end < len(lines) {
-			fmt.Fprintf(&sb, " truncated=\"true\" remaining_lines=\"%d\" next_offset=\"%d\"", len(lines)-end, end)
+		if plain {
+			// Plain-text output (simple, no XML wrapping)
+			for i := offset; i < end; i++ {
+				fmt.Fprintf(&sb, "%d\t%s\n", i+1, lines[i])
+			}
+			if end < len(lines) {
+				fmt.Fprintf(&sb, "... [%d more lines — call read_file with offset=%d to continue]\n", len(lines)-end, end)
+			}
+		} else {
+			// XML-structured output with metadata attributes
+			fmt.Fprintf(&sb, "<file path=\"%s\" display_lines=\"%d-%d\" total_lines=\"%d\"", path, offset+1, end, len(lines))
+			if end < len(lines) {
+				fmt.Fprintf(&sb, " truncated=\"true\" remaining_lines=\"%d\" next_offset=\"%d\"", len(lines)-end, end)
+			}
+			sb.WriteString(">\n")
+			for i := offset; i < end; i++ {
+				fmt.Fprintf(&sb, "%d\t%s\n", i+1, lines[i])
+			}
+			if end < len(lines) {
+				fmt.Fprintf(&sb, "... [%d more lines — call read_file again with offset=%d to continue]\n", len(lines)-end, end)
+			}
+			sb.WriteString("</file>")
 		}
-		sb.WriteString(">\n")
-		for i := offset; i < end; i++ {
-			fmt.Fprintf(&sb, "%d\t%s\n", i+1, lines[i])
-		}
-		if end < len(lines) {
-			fmt.Fprintf(&sb, "... [%d more lines — call read_file again with offset=%d to continue]\n", len(lines)-end, end)
-		}
-		sb.WriteString("</file>")
-
 		return sb.String(), nil
 	}
 }
@@ -1088,7 +1373,7 @@ func makeEditFileTool(cwd string, doom *doomLoopDetector, reads *readTracker) fu
 
 		if doom.record("edit_file", truncateForHash(fullPath+":"+oldStr[:min(50, len(oldStr))])) {
 			rollbackCheckpoint(cwd)
-			return "<DOOM_LOOP_DETECTED>You are editing the same file section repeatedly. All changes ROLLED BACK. Try a COMPLETELY DIFFERENT approach.</DOOM_LOOP_DETECTED>", nil
+			return "<DOOM_LOOP_DETECTED>You tried the same edit 3 times. All changes ROLLED BACK. Alternatives:\n" + doomLoopAlternatives("edit_file", oldStr) + "</DOOM_LOOP_DETECTED>", nil
 		}
 
 		log.Printf("[tool:edit_file] %s\n", fullPath)
@@ -1130,7 +1415,7 @@ func makeGrepTool(cwd string, doom *doomLoopDetector) func(any) (string, error) 
 		}
 
 		if doom.record("grep", truncateForHash(pattern+":"+searchPath)) {
-			return "<doom_loop_warning>You already searched for this pattern. Use the results you have.</doom_loop_warning>", nil
+			return "<DOOM_LOOP_DETECTED>Same grep pattern 3 times. Alternatives:\n" + doomLoopAlternatives("grep", pattern) + "</DOOM_LOOP_DETECTED>", nil
 		}
 
 		log.Printf("[tool:grep] %s in %s\n", pattern, searchPath)

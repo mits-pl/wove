@@ -66,11 +66,21 @@ class WoveAgent(BaseAgent):
 
     async def setup(self, environment: BaseEnvironment) -> None:
         """Upload and install wove-bench binary in the container."""
-        # Install CA certificates (some containers lack them, causing TLS errors)
+        # Install CA certs + common tools agents often need (curl, uv/uvx, git, build tools).
+        # Pre-installing these prevents agent from spending turns on apt-get install
+        # and prevents apt-lock contention with the verifier.
         await environment.exec(
-            "apt-get update -qq && apt-get install -y -qq ca-certificates > /dev/null 2>&1 || "
-            "apk add --no-cache ca-certificates > /dev/null 2>&1 || "
-            "yum install -y ca-certificates > /dev/null 2>&1 || true",
+            "(apt-get update -qq && "
+            " apt-get install -y -qq ca-certificates curl git build-essential > /dev/null 2>&1) || "
+            "(apk add --no-cache ca-certificates curl git build-base > /dev/null 2>&1) || "
+            "(yum install -y ca-certificates curl git gcc make > /dev/null 2>&1) || true",
+            user="root", timeout_sec=180,
+        )
+        # Install uv/uvx (used by some verifiers)
+        await environment.exec(
+            "curl -LsSf https://astral.sh/uv/install.sh | sh > /dev/null 2>&1 || true; "
+            "cp /root/.local/bin/uv /usr/local/bin/uv 2>/dev/null || true; "
+            "cp /root/.local/bin/uvx /usr/local/bin/uvx 2>/dev/null || true",
             user="root", timeout_sec=60,
         )
 
@@ -153,25 +163,64 @@ class WoveAgent(BaseAgent):
             "--timeout", "900",
             "--max-turns", "30",
             "--output", "/tmp/wove-metrics.json",
+            "--trace", "/tmp/wove-trace.jsonl",
             "--verbose",
         ]
         if config.get("endpoint"):
             cmd_parts.extend(["--endpoint", config["endpoint"]])
 
+        # Feature toggle flags — read from host env vars (set by lab test script)
+        for env_var, flag in [
+            ("WOVE_NO_PTY", "--no-pty"),
+            ("WOVE_NO_XML_READ", "--no-xml-read"),
+            ("WOVE_NO_WEB", "--no-web"),
+            ("WOVE_NO_REPO_MAP", "--no-repo-map"),
+            ("WOVE_NO_TODO", "--no-todo"),
+        ]:
+            if os.environ.get(env_var):
+                cmd_parts.append(flag)
+
         cmd_parts.append(shlex.quote(full_instruction))
-        cmd = " ".join(cmd_parts)
+        # Tee stdout+stderr to /tmp/wove.log inside container so we can recover logs on timeout
+        cmd = " ".join(cmd_parts) + " 2>&1 | tee /tmp/wove.log"
 
         self.logger.info(f"Running wove-bench: model={model_name} provider={provider} error_hints={len(_error_memory)}")
 
-        result = await environment.exec(
-            cmd,
-            timeout_sec=900,
-            env={"WOVE_BENCH_API_KEY": api_key},
-        )
+        result = None
+        try:
+            result = await environment.exec(
+                cmd,
+                timeout_sec=900,
+                env={"WOVE_BENCH_API_KEY": api_key},
+            )
+        except Exception as e:
+            self.logger.warning(f"wove-bench exec exception: {e}")
+            # Try to pull partial log from container
+            try:
+                partial = await environment.exec("tail -200 /tmp/wove.log", timeout_sec=10)
+                log_path = self.logs_dir / "agent.log"
+                log_path.write_text(
+                    f"=== EXCEPTION: {e} ===\n\n=== LAST 200 LINES OF /tmp/wove.log ===\n{partial.stdout}\n"
+                )
+                # Pull trace too
+                trace_partial = await environment.exec("cat /tmp/wove-trace.jsonl", timeout_sec=10)
+                if trace_partial.return_code == 0 and trace_partial.stdout:
+                    (self.logs_dir / "tool-trace.jsonl").write_text(trace_partial.stdout)
+            except Exception as e2:
+                self.logger.warning(f"could not recover log: {e2}")
+            raise
 
         self.logger.info(f"wove-bench exit: rc={result.return_code}")
         if result.stderr:
             self.logger.debug(f"stderr (last 1000): {result.stderr[-1000:]}")
+
+        # Pull tool-call trace from container
+        trace_result = await environment.exec("cat /tmp/wove-trace.jsonl", timeout_sec=10)
+        if trace_result.return_code == 0 and trace_result.stdout:
+            trace_path = self.logs_dir / "tool-trace.jsonl"
+            trace_path.write_text(trace_result.stdout)
+            n_calls = trace_result.stdout.count("\n")
+            self.logger.info(f"Saved tool trace: {n_calls} calls → {trace_path}")
 
         # Parse metrics
         metrics_result = await environment.exec("cat /tmp/wove-metrics.json", timeout_sec=5)
