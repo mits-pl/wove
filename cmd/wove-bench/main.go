@@ -26,6 +26,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/woveterm/wove/pkg/aiusechat"
 	"github.com/woveterm/wove/pkg/aiusechat/chatstore"
+	"github.com/woveterm/wove/pkg/aiusechat/repomap"
 	"github.com/woveterm/wove/pkg/aiusechat/uctypes"
 	"github.com/woveterm/wove/pkg/web/sse"
 )
@@ -486,7 +487,7 @@ Be concise — lead with actions and results, not explanations.
 ## Environment
 - Working directory: %s
 - Platform: Linux (Docker container)
-- Tools: bash, read_file, write_file, edit_file, grep, list_dir, web_search, web_fetch
+- Tools: bash (persistent), term_send_input, term_get_scrollback, read_file, write_file, edit_file, grep, list_dir, repo_map, web_search, web_fetch
 - Act autonomously — never ask for confirmation, never stop to ask "should I continue?"
 - This conversation has unlimited context. Do NOT stop until the objective is fully achieved.
 - Git is initialized for checkpointing. If your approach fails after 3 attempts, run: git checkout . to reset and try a COMPLETELY different strategy.
@@ -752,6 +753,24 @@ func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker
 				},
 			},
 			ToolTextCallback: makeListDirTool(cwd, doom),
+		},
+		{
+			Name:        "repo_map",
+			Description: "Generate a structural map of the codebase showing classes, functions, types. Faster than reading files individually. Use to quickly understand what exists in a project.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"path": map[string]any{
+						"type":        "string",
+						"description": "Directory to analyze (default: working directory)",
+					},
+					"max_chars": map[string]any{
+						"type":        "integer",
+						"description": "Maximum characters in output (default: 10000)",
+					},
+				},
+			},
+			ToolTextCallback: makeRepoMapTool(cwd),
 		},
 		{
 			Name:        "web_search",
@@ -1115,6 +1134,25 @@ func makeListDirTool(cwd string, doom *doomLoopDetector) func(any) (string, erro
 			sb.WriteString(name + "\n")
 		}
 		return sb.String(), nil
+	}
+}
+
+func makeRepoMapTool(cwd string) func(any) (string, error) {
+	return func(input any) (string, error) {
+		dirPath := cwd
+		if p := getStr(input, "path"); p != "" {
+			dirPath = resolvePath(cwd, p)
+		}
+		maxChars := 10000
+		if mc, ok := getFloat(input, "max_chars"); ok && mc > 0 {
+			maxChars = int(mc)
+		}
+		log.Printf("[tool:repo_map] %s (max %d chars)\n", dirPath, maxChars)
+		result := repomap.BuildRepoMap(dirPath, maxChars)
+		if result == "" || result == "<repo_map>\n</repo_map>" {
+			return "No code symbols found in " + dirPath, nil
+		}
+		return result, nil
 	}
 }
 
