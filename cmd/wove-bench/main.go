@@ -125,6 +125,38 @@ func (wt *writeTracker) hasWritten() bool {
 	return wt.writeCount > 0
 }
 
+// --- Tool error tracker ---
+// Counts consecutive failures per tool, resets on success.
+
+type toolErrorTracker struct {
+	mu     sync.Mutex
+	counts map[string]int
+	maxErr int
+}
+
+func newToolErrorTracker(maxErr int) *toolErrorTracker {
+	return &toolErrorTracker{counts: make(map[string]int), maxErr: maxErr}
+}
+
+func (t *toolErrorTracker) recordFail(tool string) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.counts[tool]++
+	return t.counts[tool]
+}
+
+func (t *toolErrorTracker) recordSuccess(tool string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.counts, tool)
+}
+
+func (t *toolErrorTracker) attemptsLeft(tool string) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.maxErr - t.counts[tool]
+}
+
 // --- Read-before-edit tracker ---
 // Enforces that files must be read before editing.
 
@@ -156,9 +188,13 @@ func wrapWithErrorReflection(result string, err error, toolName string, attempt 
 	if err == nil {
 		return result, nil
 	}
+	attemptsLeft := 3 - attempt
+	if attemptsLeft < 0 {
+		attemptsLeft = 0
+	}
 	reflection := fmt.Sprintf(
-		"%s\n\n<error_reflection_required>\nTool '%s' failed. Before retrying:\n1. Pinpoint exactly what went wrong\n2. Explain why this mistake happened\n3. Make the CORRECT tool call — do NOT repeat the same mistake\nAttempts used: %d/3\n</error_reflection_required>",
-		err.Error(), toolName, attempt)
+		"%s\n\n<error_reflection_required>\nTool '%s' failed (attempt %d, %d remaining). You MUST reflect before retrying:\n1. Pinpoint EXACTLY what was wrong — wrong tool? missing parameter? malformed arguments?\n2. Explain WHY this mistake happened — did you misread the schema? miss a required field?\n3. Make the CORRECT tool call — do NOT repeat the same mistake.\n</error_reflection_required>",
+		err.Error(), toolName, attempt, attemptsLeft)
 	return "", fmt.Errorf("%s", reflection)
 }
 
@@ -368,7 +404,7 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 		log.Printf("[wove-bench] error: %v\n", err)
 	}
 
-	// --- Anti-early-stop (ForgeCode/Blobfish pattern) ---
+	// --- Anti-early-stop ---
 	// Three conditions that trigger a "continue" nudge:
 	// 1. Agent stopped in <5 turns (barely tried)
 	// 2. Agent never wrote any output file (nothing to verify)
@@ -864,11 +900,16 @@ func makeBashTool(cwd string, doom *doomLoopDetector, term *terminalSession) fun
 			output, completed, err := term.runCommand(command, timeoutSec)
 			if err == nil {
 				output = stripANSI(output)
+				wasTruncated := false
 				if len(output) > 100000 {
-					output = output[:50000] + "\n\n... [truncated, showing first and last 50KB] ...\n\n" + output[len(output)-50000:]
+					output = output[:50000] + "\n\n... [TRUNCATED: showing first and last 50KB of " + fmt.Sprintf("%d", len(output)) + " total bytes — use grep/tail for specific content] ...\n\n" + output[len(output)-50000:]
+					wasTruncated = true
 				}
 				if !completed {
 					output += "\n[TIMEOUT: command still running after " + fmt.Sprintf("%d", timeoutSec) + "s — use term_get_scrollback to see more output]"
+				}
+				if wasTruncated {
+					output = "[OUTPUT TRUNCATED — see markers below]\n" + output
 				}
 				return output, nil
 			}
@@ -980,12 +1021,20 @@ func makeReadFileTool(cwd string, doom *doomLoopDetector, reads *readTracker) fu
 		}
 
 		var sb strings.Builder
+		// XML-structured output with metadata attributes
+		// Model sees total_lines vs display_lines — knows exactly if truncated
+		fmt.Fprintf(&sb, "<file path=\"%s\" display_lines=\"%d-%d\" total_lines=\"%d\"", path, offset+1, end, len(lines))
+		if end < len(lines) {
+			fmt.Fprintf(&sb, " truncated=\"true\" remaining_lines=\"%d\" next_offset=\"%d\"", len(lines)-end, end)
+		}
+		sb.WriteString(">\n")
 		for i := offset; i < end; i++ {
 			fmt.Fprintf(&sb, "%d\t%s\n", i+1, lines[i])
 		}
 		if end < len(lines) {
-			fmt.Fprintf(&sb, "\n\nWARNING: This output is TRUNCATED. You are seeing lines %d-%d out of %d total lines. %d lines are NOT shown. Use offset=%d to read the next section. Do NOT assume you have seen the entire file.", offset+1, end, len(lines), len(lines)-end, end)
+			fmt.Fprintf(&sb, "... [%d more lines — call read_file again with offset=%d to continue]\n", len(lines)-end, end)
 		}
+		sb.WriteString("</file>")
 
 		return sb.String(), nil
 	}
