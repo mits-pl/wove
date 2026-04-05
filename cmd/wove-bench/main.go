@@ -272,7 +272,16 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 	doomDetector := newDoomLoopDetector()
 	readFiles := newReadTracker()
 	writes := newWriteTracker()
-	tools := buildStandaloneTools(cfg.CWD, doomDetector, readFiles, writes)
+	// Create persistent terminal session
+	termSession, termErr := newTerminalSession(cfg.CWD)
+	if termErr != nil {
+		log.Printf("[terminal] failed to create session: %v, falling back to stateless bash\n", termErr)
+	}
+	if termSession != nil {
+		defer termSession.close()
+	}
+
+	tools := buildStandaloneTools(cfg.CWD, doomDetector, readFiles, writes, termSession)
 
 	systemPrompts := []string{buildSystemPrompt(cfg.CWD)}
 	if cfg.SystemFile != "" {
@@ -588,11 +597,11 @@ If you wrote code but didn't test it, YOU ARE NOT DONE.`, cwd)
 }
 
 // buildStandaloneTools creates filesystem/shell tools with doom-loop detection and read-before-edit enforcement.
-func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker, writes *writeTracker) []uctypes.ToolDefinition {
+func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker, writes *writeTracker, term *terminalSession) []uctypes.ToolDefinition {
 	return []uctypes.ToolDefinition{
 		{
 			Name:        "bash",
-			Description: "Execute a bash command. Returns stdout+stderr. Use for running tests, git commands, build tools, and any shell operations.",
+			Description: "Execute a bash command in a PERSISTENT terminal session. State (cd, exports, venv, bg processes) is preserved across calls. Use for running tests, git commands, build tools.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -607,7 +616,40 @@ func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker
 				},
 				"required": []any{"command"},
 			},
-			ToolTextCallback: makeBashTool(cwd, doom),
+			ToolTextCallback: makeBashTool(cwd, doom, term),
+		},
+		{
+			Name:        "term_send_input",
+			Description: "Send raw input to the terminal (for interactive programs like vim, REPLs, prompts). Appends a newline automatically unless press_enter is false.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"text": map[string]any{
+						"type":        "string",
+						"description": "Text to send to the terminal",
+					},
+					"press_enter": map[string]any{
+						"type":        "boolean",
+						"description": "Append newline after text (default: true)",
+					},
+				},
+				"required": []any{"text"},
+			},
+			ToolTextCallback: makeTermSendInputTool(term),
+		},
+		{
+			Name:        "term_get_scrollback",
+			Description: "Read recent terminal output. Use after term_send_input to see the response from an interactive program.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"max_bytes": map[string]any{
+						"type":        "integer",
+						"description": "Max bytes to return (default: 8000)",
+					},
+				},
+			},
+			ToolTextCallback: makeTermGetScrollbackTool(term),
 		},
 		{
 			Name:        "read_file",
@@ -779,7 +821,7 @@ func truncateForHash(s string) string {
 	return s
 }
 
-func makeBashTool(cwd string, doom *doomLoopDetector) func(any) (string, error) {
+func makeBashTool(cwd string, doom *doomLoopDetector, term *terminalSession) func(any) (string, error) {
 	return func(input any) (string, error) {
 		command := getStr(input, "command")
 		if command == "" {
@@ -796,10 +838,27 @@ func makeBashTool(cwd string, doom *doomLoopDetector) func(any) (string, error) 
 			timeoutSec = int(ts)
 		}
 
+		log.Printf("[tool:bash] %s\n", command)
+
+		// Try persistent terminal session first
+		if term != nil {
+			output, completed, err := term.runCommand(command, timeoutSec)
+			if err == nil {
+				output = stripANSI(output)
+				if len(output) > 100000 {
+					output = output[:50000] + "\n\n... [truncated, showing first and last 50KB] ...\n\n" + output[len(output)-50000:]
+				}
+				if !completed {
+					output += "\n[TIMEOUT: command still running after " + fmt.Sprintf("%d", timeoutSec) + "s — use term_get_scrollback to see more output]"
+				}
+				return output, nil
+			}
+			log.Printf("[tool:bash] terminal session error: %v, falling back to stateless\n", err)
+		}
+
+		// Fallback: stateless bash
 		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
 		defer cancel()
-
-		log.Printf("[tool:bash] %s\n", command)
 
 		cmd := exec.CommandContext(ctx, "bash", "-c", command)
 		cmd.Dir = cwd
@@ -815,6 +874,49 @@ func makeBashTool(cwd string, doom *doomLoopDetector) func(any) (string, error) 
 			return fmt.Sprintf("%s\n[exit code: %v]", result, err), nil
 		}
 		return result, nil
+	}
+}
+
+func makeTermSendInputTool(term *terminalSession) func(any) (string, error) {
+	return func(input any) (string, error) {
+		text := getStr(input, "text")
+		if text == "" {
+			return "", fmt.Errorf("text is required")
+		}
+		pressEnter := true
+		if m, ok := input.(map[string]any); ok {
+			if v, ok := m["press_enter"].(bool); ok {
+				pressEnter = v
+			}
+		}
+		if term == nil {
+			return "", fmt.Errorf("terminal session not available")
+		}
+		if pressEnter {
+			text += "\n"
+		}
+		log.Printf("[tool:term_send_input] %q\n", text)
+		if err := term.sendInput(text); err != nil {
+			return "", err
+		}
+		// Wait a bit for program to react
+		time.Sleep(500 * time.Millisecond)
+		return "Input sent. Use term_get_scrollback to see response.", nil
+	}
+}
+
+func makeTermGetScrollbackTool(term *terminalSession) func(any) (string, error) {
+	return func(input any) (string, error) {
+		if term == nil {
+			return "", fmt.Errorf("terminal session not available")
+		}
+		maxBytes := 8000
+		if mb, ok := getFloat(input, "max_bytes"); ok && mb > 0 {
+			maxBytes = int(mb)
+		}
+		output := stripANSI(term.getScrollback(maxBytes))
+		log.Printf("[tool:term_get_scrollback] returned %d bytes\n", len(output))
+		return output, nil
 	}
 }
 
