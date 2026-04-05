@@ -66,22 +66,18 @@ class WoveAgent(BaseAgent):
 
     async def setup(self, environment: BaseEnvironment) -> None:
         """Upload and install wove-bench binary in the container."""
-        # Install CA certs + common tools agents often need (curl, uv/uvx, git, build tools).
-        # Pre-installing these prevents agent from spending turns on apt-get install
-        # and prevents apt-lock contention with the verifier.
+        # Install ONLY essential tools. Skip apt-get update (slow, usually unnecessary).
+        # Skip build-essential/git — most containers have them; agent can install if needed.
+        # Install curl + ca-certificates (very small), then uv via pip (no apt).
         await environment.exec(
-            "(apt-get update -qq && "
-            " apt-get install -y -qq ca-certificates curl git build-essential > /dev/null 2>&1) || "
-            "(apk add --no-cache ca-certificates curl git build-base > /dev/null 2>&1) || "
-            "(yum install -y ca-certificates curl git gcc make > /dev/null 2>&1) || true",
-            user="root", timeout_sec=180,
-        )
-        # Install uv/uvx (used by some verifiers)
-        await environment.exec(
-            "curl -LsSf https://astral.sh/uv/install.sh | sh > /dev/null 2>&1 || true; "
-            "cp /root/.local/bin/uv /usr/local/bin/uv 2>/dev/null || true; "
-            "cp /root/.local/bin/uvx /usr/local/bin/uvx 2>/dev/null || true",
+            "(which curl >/dev/null 2>&1 || apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null 2>&1) || "
+            "(which curl >/dev/null 2>&1 || apk add --no-cache ca-certificates curl >/dev/null 2>&1) || true",
             user="root", timeout_sec=60,
+        )
+        # Install uv via pip if it's not already there (much faster than curl script)
+        await environment.exec(
+            "which uv >/dev/null 2>&1 || pip install --quiet --break-system-packages uv 2>/dev/null || pip3 install --quiet --break-system-packages uv 2>/dev/null || true",
+            user="root", timeout_sec=30,
         )
 
         # Determine correct binary for container architecture
