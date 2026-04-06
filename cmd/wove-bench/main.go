@@ -589,7 +589,45 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 		log.Fatalf("[wove-bench] chatstore error: %v", err)
 	}
 
-	aiMetrics, err := aiusechat.RunAIChat(ctx, sseHandler, backend, chatOpts)
+	// Declare aiMetrics early so incremental writer can access it
+	var aiMetrics *uctypes.AIMetrics
+
+	// Write metrics incrementally so they survive if harbor kills the process
+	writeMetrics := func() {
+		result := BenchMetrics{
+			DurationMs: int(time.Since(startTime).Milliseconds()),
+			DoomLoops:  doomDetector.detected,
+		}
+		if aiMetrics != nil {
+			result.InputTokens = aiMetrics.Usage.InputTokens
+			result.OutputTokens = aiMetrics.Usage.OutputTokens
+			result.ToolUses = aiMetrics.ToolUseCount
+			result.Turns = aiMetrics.RequestCount
+		}
+		if data, err := json.Marshal(result); err == nil {
+			_ = os.WriteFile("/tmp/wove-metrics.json", data, 0644)
+		}
+	}
+	// Write initial metrics (turns=0) so adapter can read something even on kill
+	writeMetrics()
+
+	// Periodic metrics writer — every 30s to file + stderr
+	metricsTicker := time.NewTicker(30 * time.Second)
+	go func() {
+		for range metricsTicker.C {
+			writeMetrics()
+			if aiMetrics != nil {
+				log.Printf("[metrics] turns=%d tools=%d in=%d out=%d dur=%ds\n",
+					aiMetrics.RequestCount, aiMetrics.ToolUseCount,
+					aiMetrics.Usage.InputTokens, aiMetrics.Usage.OutputTokens,
+					int(time.Since(startTime).Seconds()))
+			}
+		}
+	}()
+
+	aiMetrics, err = aiusechat.RunAIChat(ctx, sseHandler, backend, chatOpts)
+	metricsTicker.Stop()
+	writeMetrics() // final write
 	if err != nil {
 		log.Printf("[wove-bench] error: %v\n", err)
 	}
