@@ -541,23 +541,17 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 		StepTimeoutSec:  300,     // 5min max per API call — prevents stalled SSE from eating all time
 	}
 
-	// Configure HTTP client with timeouts to prevent hanging on API calls
-	transport := &http.Transport{
-		DialContext: (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-		ResponseHeaderTimeout: 120 * time.Second, // max wait for response headers
-		IdleConnTimeout:       90 * time.Second,
-	}
+	// Skip TLS verification in Docker containers that lack CA certs
 	if os.Getenv("WOVE_BENCH_SKIP_TLS") == "1" || isInDocker() {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		http.DefaultTransport = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+		}
 		log.Printf("[wove-bench] TLS verification disabled (Docker container)\n")
 	}
-	http.DefaultTransport = transport
-	// NOTE: Do NOT set http.DefaultClient.Timeout — it kills SSE streams.
-	// ResponseHeaderTimeout (120s) covers the "no response at all" case.
-	// For SSE, response headers arrive quickly, then body streams for minutes.
 
 	// Initialize git for checkpoint/rollback support
 	initGitCheckpoint(cfg.CWD)
@@ -565,7 +559,7 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 	log.Printf("[wove-bench] model=%s api=%s endpoint=%s tools=%d\n", cfg.Model, cfg.APIType, cfg.Endpoint, len(tools))
 	log.Printf("[wove-bench] cwd=%s\n", cfg.CWD)
 	log.Printf("[wove-bench] instruction: %.200s\n", cfg.Instruction)
-	log.Printf("[wove-bench] http timeout: response_header=120s, dial=30s\n")
+	log.Printf("[wove-bench] http: dial_timeout=30s\n")
 	log.Printf("[wove-bench] sending first API request...\n")
 
 	backend, err := aiusechat.GetBackendByAPIType(chatOpts.Config.APIType)
