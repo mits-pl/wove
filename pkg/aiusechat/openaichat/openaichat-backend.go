@@ -329,33 +329,10 @@ func modelUsesThinkTags(model string) bool {
 	return false
 }
 
-// idleTimeoutReader wraps a reader and returns an error if no data arrives within the timeout.
-type idleTimeoutReader struct {
-	r       io.Reader
-	timeout time.Duration
-	ch      chan readResult
-}
-
-type readResult struct {
-	n   int
-	err error
-}
-
-func newIdleTimeoutReader(r io.Reader, timeout time.Duration) *idleTimeoutReader {
-	return &idleTimeoutReader{r: r, timeout: timeout, ch: make(chan readResult, 1)}
-}
-
-func (itr *idleTimeoutReader) Read(p []byte) (int, error) {
-	go func() {
-		n, err := itr.r.Read(p)
-		itr.ch <- readResult{n, err}
-	}()
-	select {
-	case res := <-itr.ch:
-		return res.n, res.err
-	case <-time.After(itr.timeout):
-		return 0, fmt.Errorf("SSE idle timeout: no data received for %s", itr.timeout)
-	}
+// decodeResult holds the return values from a Decode() call.
+type decodeResult struct {
+	event eventsource.Event
+	err   error
 }
 
 func processChatStream(
@@ -365,9 +342,7 @@ func processChatStream(
 	chatOpts uctypes.WaveChatOpts,
 	cont *uctypes.WaveContinueResponse,
 ) (*uctypes.WaveStopReason, *StoredChatMessage, error) {
-	// Wrap body with idle timeout — if MiniMax stops sending data for 120s, abort
-	timeoutBody := newIdleTimeoutReader(body, 120*time.Second)
-	decoder := eventsource.NewDecoder(timeoutBody)
+	decoder := eventsource.NewDecoder(body)
 	msgID := uuid.New().String()
 	textID := uuid.New().String()
 	reasoningID := uuid.New().String()
@@ -395,7 +370,35 @@ func processChatStream(
 			}, nil, err
 		}
 
-		event, err := decoder.Decode()
+		// Decode with idle timeout: if no SSE event arrives in 120s, abort.
+		// Run Decode in goroutine to make it cancellable.
+		decodeCh := make(chan decodeResult, 1)
+		go func() {
+			ev, decErr := decoder.Decode()
+			decodeCh <- decodeResult{ev, decErr}
+		}()
+		var event eventsource.Event
+		var err error
+		select {
+		case res := <-decodeCh:
+			event = res.event
+			err = res.err
+		case <-time.After(120 * time.Second):
+			log.Printf("[openaichat] SSE idle timeout: no event for 120s after %d chunks\n", chunkCount)
+			_ = sseHandler.AiMsgError("SSE idle timeout")
+			return &uctypes.WaveStopReason{
+				Kind:      uctypes.StopKindError,
+				ErrorType: "timeout",
+				ErrorText: "SSE idle timeout: no data for 120s",
+			}, nil, fmt.Errorf("SSE idle timeout after %d chunks", chunkCount)
+		case <-ctx.Done():
+			log.Printf("[openaichat] context cancelled while waiting for SSE event\n")
+			return &uctypes.WaveStopReason{
+				Kind:      uctypes.StopKindCanceled,
+				ErrorType: "cancelled",
+				ErrorText: "context cancelled",
+			}, nil, ctx.Err()
+		}
 		chunkCount++
 		silenceMs := time.Since(lastChunkTime).Milliseconds()
 		lastChunkTime = time.Now()
