@@ -534,7 +534,16 @@ func RunAIChat(ctx context.Context, sseHandler *sse.SSEHandlerCh, backend UseCha
 				log.Printf("[mcp] warning: failed to generate MCP context: %v\n", mcpErr)
 			}
 		}
-		stopReason, rtnMessages, err := runAIChatStep(ctx, sseHandler, backend, chatOpts, cont)
+		// Per-step timeout (bench: 300s to prevent single stalled stream from eating all time)
+		stepCtx := ctx
+		var stepCancel context.CancelFunc
+		if chatOpts.StepTimeoutSec > 0 {
+			stepCtx, stepCancel = context.WithTimeout(ctx, time.Duration(chatOpts.StepTimeoutSec)*time.Second)
+		}
+		stopReason, rtnMessages, err := runAIChatStep(stepCtx, sseHandler, backend, chatOpts, cont)
+		if stepCancel != nil {
+			stepCancel()
+		}
 		metrics.RequestCount++
 		if chatOpts.Config.IsWaveProxy() {
 			metrics.ProxyReqCount++

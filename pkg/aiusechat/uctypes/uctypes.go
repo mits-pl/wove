@@ -578,6 +578,10 @@ type WaveChatOpts struct {
 	// Context compaction threshold (bytes). 0 = use default (60KB).
 	CompactThreshold int
 
+	// Per-step timeout for individual API calls (seconds). 0 = no per-step limit.
+	// Prevents a single stalled SSE stream from consuming the entire run budget.
+	StepTimeoutSec int
+
 	// Sub-task configuration
 	AutoApproveTools bool // skip UI approval for tools (sub-tasks)
 	SubTaskDepth     int  // nesting depth, 0 = top-level

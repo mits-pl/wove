@@ -538,6 +538,7 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 		Tools:            tools,
 		SystemPrompt:     systemPrompts,
 		CompactThreshold: 200000, // 200KB — MiniMax M2.7 has 200K token context
+		StepTimeoutSec:  300,     // 5min max per API call — prevents stalled SSE from eating all time
 	}
 
 	// Configure HTTP client with timeouts to prevent hanging on API calls

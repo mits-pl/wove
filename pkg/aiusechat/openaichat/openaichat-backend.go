@@ -329,12 +329,6 @@ func modelUsesThinkTags(model string) bool {
 	return false
 }
 
-// decodeResult holds the return values from a Decode() call.
-type decodeResult struct {
-	event eventsource.Event
-	err   error
-}
-
 func processChatStream(
 	ctx context.Context,
 	body io.Reader,
@@ -370,35 +364,7 @@ func processChatStream(
 			}, nil, err
 		}
 
-		// Decode with idle timeout: if no SSE event arrives in 120s, abort.
-		// Run Decode in goroutine to make it cancellable.
-		decodeCh := make(chan decodeResult, 1)
-		go func() {
-			ev, decErr := decoder.Decode()
-			decodeCh <- decodeResult{ev, decErr}
-		}()
-		var event eventsource.Event
-		var err error
-		select {
-		case res := <-decodeCh:
-			event = res.event
-			err = res.err
-		case <-time.After(120 * time.Second):
-			log.Printf("[openaichat] SSE idle timeout: no event for 120s after %d chunks\n", chunkCount)
-			_ = sseHandler.AiMsgError("SSE idle timeout")
-			return &uctypes.WaveStopReason{
-				Kind:      uctypes.StopKindError,
-				ErrorType: "timeout",
-				ErrorText: "SSE idle timeout: no data for 120s",
-			}, nil, fmt.Errorf("SSE idle timeout after %d chunks", chunkCount)
-		case <-ctx.Done():
-			log.Printf("[openaichat] context cancelled while waiting for SSE event\n")
-			return &uctypes.WaveStopReason{
-				Kind:      uctypes.StopKindCanceled,
-				ErrorType: "cancelled",
-				ErrorText: "context cancelled",
-			}, nil, ctx.Err()
-		}
+		event, err := decoder.Decode()
 		chunkCount++
 		silenceMs := time.Since(lastChunkTime).Milliseconds()
 		lastChunkTime = time.Now()
