@@ -329,6 +329,35 @@ func modelUsesThinkTags(model string) bool {
 	return false
 }
 
+// idleTimeoutReader wraps a reader and returns an error if no data arrives within the timeout.
+type idleTimeoutReader struct {
+	r       io.Reader
+	timeout time.Duration
+	ch      chan readResult
+}
+
+type readResult struct {
+	n   int
+	err error
+}
+
+func newIdleTimeoutReader(r io.Reader, timeout time.Duration) *idleTimeoutReader {
+	return &idleTimeoutReader{r: r, timeout: timeout, ch: make(chan readResult, 1)}
+}
+
+func (itr *idleTimeoutReader) Read(p []byte) (int, error) {
+	go func() {
+		n, err := itr.r.Read(p)
+		itr.ch <- readResult{n, err}
+	}()
+	select {
+	case res := <-itr.ch:
+		return res.n, res.err
+	case <-time.After(itr.timeout):
+		return 0, fmt.Errorf("SSE idle timeout: no data received for %s", itr.timeout)
+	}
+}
+
 func processChatStream(
 	ctx context.Context,
 	body io.Reader,
@@ -336,7 +365,9 @@ func processChatStream(
 	chatOpts uctypes.WaveChatOpts,
 	cont *uctypes.WaveContinueResponse,
 ) (*uctypes.WaveStopReason, *StoredChatMessage, error) {
-	decoder := eventsource.NewDecoder(body)
+	// Wrap body with idle timeout — if MiniMax stops sending data for 120s, abort
+	timeoutBody := newIdleTimeoutReader(body, 120*time.Second)
+	decoder := eventsource.NewDecoder(timeoutBody)
 	msgID := uuid.New().String()
 	textID := uuid.New().String()
 	reasoningID := uuid.New().String()
