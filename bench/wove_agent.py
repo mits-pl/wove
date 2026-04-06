@@ -36,8 +36,8 @@ class WoveAgent(BaseAgent):
 
     MODEL_CONFIGS = {
         "minimax": {
-            "api_type": "openai-chat",
-            "endpoint": "https://api.minimax.io/v1/chat/completions",
+            "api_type": "anthropic-messages",
+            "endpoint": "https://api.minimax.io/anthropic/v1/messages",
             "env_key": "MINIMAX_API_KEY",
         },
         "anthropic": {
@@ -190,30 +190,38 @@ class WoveAgent(BaseAgent):
                 timeout_sec=900,
                 env={"WOVE_BENCH_API_KEY": api_key},
             )
-        except Exception as e:
-            self.logger.warning(f"wove-bench exec exception: {e}")
+        except BaseException as e:
+            # BaseException catches asyncio.CancelledError (harbor timeout) + regular exceptions
+            self.logger.warning(f"wove-bench exec exception ({type(e).__name__}): {e}")
             # Always write at least the exception info
             try:
-                (self.logs_dir / "agent.log").write_text(f"=== EXCEPTION: {e} ===\n")
+                (self.logs_dir / "agent.log").write_text(f"=== {type(e).__name__}: {e} ===\n")
             except Exception:
                 pass
-            # Try to pull log (separate try so trace recovery runs even if log fails)
+            # Try to pull log
             try:
                 partial = await environment.exec("tail -300 /tmp/wove.log", timeout_sec=15)
                 if partial.stdout:
                     (self.logs_dir / "agent.log").write_text(
-                        f"=== EXCEPTION: {e} ===\n\n=== /tmp/wove.log (tail 300) ===\n{partial.stdout}\n"
+                        f"=== {type(e).__name__}: {e} ===\n\n=== /tmp/wove.log (tail 300) ===\n{partial.stdout}\n"
                     )
-            except Exception as e2:
+            except BaseException as e2:
                 self.logger.warning(f"could not pull wove.log: {e2}")
-            # Try trace separately
+            # Try trace
             try:
                 trace_partial = await environment.exec("cat /tmp/wove-trace.jsonl", timeout_sec=15)
                 if trace_partial.return_code == 0 and trace_partial.stdout:
                     (self.logs_dir / "tool-trace.jsonl").write_text(trace_partial.stdout)
                     self.logger.info(f"recovered trace: {trace_partial.stdout.count(chr(10))} lines")
-            except Exception as e2:
+            except BaseException as e2:
                 self.logger.warning(f"could not pull trace: {e2}")
+            # Try metrics (agent may have written partial)
+            try:
+                metrics_partial = await environment.exec("cat /tmp/wove-metrics.json", timeout_sec=10)
+                if metrics_partial.return_code == 0 and metrics_partial.stdout:
+                    (self.logs_dir / "metrics.json").write_text(metrics_partial.stdout)
+            except BaseException:
+                pass
             raise
 
         self.logger.info(f"wove-bench exit: rc={result.return_code}")
