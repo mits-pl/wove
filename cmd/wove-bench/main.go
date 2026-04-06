@@ -540,17 +540,23 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 		CompactThreshold: 200000, // 200KB — MiniMax M2.7 has 200K token context
 	}
 
-	// Skip TLS verification in Docker containers that lack CA certs
+	// Configure HTTP client with timeouts to prevent hanging on API calls
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ResponseHeaderTimeout: 120 * time.Second, // max wait for response headers
+		IdleConnTimeout:       90 * time.Second,
+	}
 	if os.Getenv("WOVE_BENCH_SKIP_TLS") == "1" || isInDocker() {
-		http.DefaultTransport = &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-			DialContext: (&net.Dialer{
-				Timeout:   30 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		}
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 		log.Printf("[wove-bench] TLS verification disabled (Docker container)\n")
 	}
+	http.DefaultTransport = transport
+	// NOTE: Do NOT set http.DefaultClient.Timeout — it kills SSE streams.
+	// ResponseHeaderTimeout (120s) covers the "no response at all" case.
+	// For SSE, response headers arrive quickly, then body streams for minutes.
 
 	// Initialize git for checkpoint/rollback support
 	initGitCheckpoint(cfg.CWD)
@@ -558,6 +564,8 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 	log.Printf("[wove-bench] model=%s api=%s endpoint=%s tools=%d\n", cfg.Model, cfg.APIType, cfg.Endpoint, len(tools))
 	log.Printf("[wove-bench] cwd=%s\n", cfg.CWD)
 	log.Printf("[wove-bench] instruction: %.200s\n", cfg.Instruction)
+	log.Printf("[wove-bench] http timeout: response_header=120s, dial=30s\n")
+	log.Printf("[wove-bench] sending first API request...\n")
 
 	backend, err := aiusechat.GetBackendByAPIType(chatOpts.Config.APIType)
 	if err != nil {
@@ -763,6 +771,12 @@ Start at Level 1. Only go to Level 2 if it fails. Only go to Level 3 if Level 2 
 Use tools proactively. When multiple tool calls are independent, execute them in parallel.
 Prefer edit_file over full file rewrites when making targeted changes.
 You MUST read a file before editing it.
+
+CRITICAL — repo_map usage:
+- Call repo_map FIRST when exploring a codebase with 3+ code files (Python/JS/Go/C/Rust).
+- It returns structural overview: classes, functions, types per file. MUCH faster than reading every file.
+- Use BEFORE opening individual files — it tells you which file to read.
+- Example: repo_map("/app") → see all functions/classes, then read just the relevant ones.
 
 ## Doom Loop Prevention
 If repeating the same action more than twice:
