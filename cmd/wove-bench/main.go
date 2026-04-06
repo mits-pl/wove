@@ -25,6 +25,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/woveterm/wove/pkg/aiusechat"
+	"github.com/woveterm/wove/pkg/aiusechat/anthropic"
 	"github.com/woveterm/wove/pkg/aiusechat/chatstore"
 	"github.com/woveterm/wove/pkg/aiusechat/repomap"
 	"github.com/woveterm/wove/pkg/aiusechat/uctypes"
@@ -552,6 +553,9 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 		}
 		log.Printf("[wove-bench] TLS verification disabled (Docker container)\n")
 	}
+
+	// Strip thinking blocks from conversation history (saves context tokens for MiniMax)
+	anthropic.StripThinkingFromHistory = true
 
 	// Initialize git for checkpoint/rollback support
 	initGitCheckpoint(cfg.CWD)

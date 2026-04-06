@@ -24,6 +24,11 @@ import (
 	"github.com/woveterm/wove/pkg/wavebase"
 )
 
+// StripThinkingFromHistory controls whether thinking/reasoning blocks are
+// dropped from conversation history before sending to the API. Set to true
+// for bench runs where MiniMax sends unsolicited reasoning that wastes context.
+var StripThinkingFromHistory bool
+
 // these conversions are based off the anthropic spec
 // and the aiprompts/aisdk-uimessage-type.md doc (v5)
 
@@ -307,15 +312,21 @@ func convertPartToAnthropicBlocks(p uctypes.UIMessagePart, role string, blockInd
 			Text: p.Text,
 		}}, nil
 	} else if p.Type == "reasoning" {
+		// Strip thinking blocks from history when StripThinkingFromHistory is set.
+		// MiniMax sends reasoning even when not requested; stripping saves context
+		// tokens and speeds up requests. Model generates fresh thinking each time.
+		if StripThinkingFromHistory {
+			return nil, nil
+		}
 		// Check if we have a signature in provider metadata
 		signature, hasSignature := p.ProviderMetadata[ProviderMetadataThinkingSignatureKey]
 		if !hasSignature {
-			return nil, fmt.Errorf("reasoning part requires signature in provider metadata key '%s'", ProviderMetadataThinkingSignatureKey)
+			return nil, nil
 		}
 
 		signatureStr, ok := signature.(string)
 		if !ok {
-			return nil, fmt.Errorf("reasoning part signature must be a string, got %T", signature)
+			return nil, nil
 		}
 
 		return []anthropicMessageContentBlock{{
