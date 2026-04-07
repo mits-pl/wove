@@ -876,23 +876,30 @@ Working directory: %s
 ### Step 1: Quick Look
 Run bash to see what's in the working directory: ls -la, check /tests/ existence.
 
-### Step 2: Explore via Sub-Agent
-run_sub_task: "Explore the project in %s. List ALL files, read key source files, check /tests/ for test scripts. Report: (1) what files exist, (2) what tests expect, (3) what needs to be built."
+### Step 2: Explore via Sub-Agent (ONE sub-task only!)
+run_sub_task with this EXACT task: "You are a research agent. Explore %s THOROUGHLY in ONE pass. Do ALL of this:
+1. ls -laR to see ALL files
+2. Read /tests/test*.py or /tests/test.sh if they exist — report EXACTLY what tests check
+3. Read key source files (*.py, *.c, *.js etc.) — report structure, functions, imports
+4. Check README.md or instruction files
+5. Report file sizes, types, binary vs text
+Return a COMPLETE report. This is your ONLY chance — no follow-up questions."
 
-### Step 3: Plan
-Call todo_write with 3-7 SPECIFIC steps based on exploration results. Each step must include exact file paths and commands.
+### Step 3: Plan (IMMEDIATELY after exploration)
+Call todo_write with 3-5 SPECIFIC steps. Each step references exact file paths from exploration.
 
-### Step 4: Execute Each Step
-For each plan step, call run_sub_task with a DETAILED description:
-- Include ALL context the sub-agent needs (file paths, expected format, specific requirements)
-- Sub-agent has NO memory of previous steps — include everything
-- Reference files created by previous steps if needed
+### Step 4: Implement (1-2 sub-tasks MAX)
+run_sub_task with DETAILED description including:
+- ALL context from exploration (file paths, test expectations, format requirements)
+- EXACT code to write or approach to take
+- Sub-agent has NO memory — include EVERYTHING it needs
+Combine related steps into ONE sub-task. Fewer sub-tasks = faster.
 
-### Step 5: Verify
-run_sub_task: "Verify the solution: run tests if /tests/ exists, check all required output files, validate format."
+### Step 5: Verify (1 sub-task)
+run_sub_task: "Verify: run tests, check output files exist and have correct format."
 
-### Step 6: Fix (if needed)
-If verification failed, run_sub_task with specific fix instructions.
+### Step 6: Fix (if needed, 1 sub-task)
+If verification failed, ONE fix sub-task with the specific error message and what to change.
 
 ## Rules
 - NEVER write code yourself — ALWAYS delegate via run_sub_task
