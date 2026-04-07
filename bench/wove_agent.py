@@ -36,8 +36,8 @@ class WoveAgent(BaseAgent):
 
     MODEL_CONFIGS = {
         "minimax": {
-            "api_type": "anthropic-messages",
-            "endpoint": "https://api.minimax.io/anthropic/v1/messages",
+            "api_type": "openai-chat",
+            "endpoint": "https://api.minimax.io/v1/chat/completions",
             "env_key": "MINIMAX_API_KEY",
         },
         "anthropic": {
