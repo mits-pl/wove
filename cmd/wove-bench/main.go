@@ -923,18 +923,22 @@ Working directory: %s
 ## Your Task
 %s
 
-## Rules
-- Complete the task thoroughly and report what you did
-- Write results to files as instructed
-- If you find the answer/solution, WRITE IT TO THE OUTPUT FILE IMMEDIATELY
-- When done, summarize: what files you created/modified and the key results
-- You have max 300 seconds — be efficient, start coding early
+## CRITICAL RULES
+1. WRITE OUTPUT FILES IMMEDIATELY when you have a solution. Don't verify first — write first, verify after.
+2. A partial working solution saved to disk beats a perfect solution still in your head when time runs out.
+3. Start coding within first 2 tool calls. Don't over-analyze.
+4. You have max 300 seconds — be efficient.
 
 ## Tool Tips
-- bash: State persists. Default timeout 120s. For binary files >1MB use 'grep -aob' not 'strings|grep'.
-- read_file: Returns content with line numbers. Use offset/limit for large files. MUST read before edit.
+- bash: State persists. Default timeout 120s.
+- For BINARY files (>1MB, .dat, .bin, disk images): use 'grep -aob PATTERN file' for byte offset (instant). Then 'dd if=file bs=1 skip=OFFSET count=LEN'. NEVER 'strings file | grep' or 'hexdump | grep' on large files — they timeout.
+- read_file: Returns XML-tagged content with line numbers. MUST read before edit.
 - edit_file: old_string must be unique. Re-read file if match fails.
-- repo_map: Call first on codebases with 3+ files to see structure.`, cwd, taskDesc)
+- repo_map: Call first on codebases with 3+ files to see structure.
+- grep: For text files. Returns file:line format.
+
+## When done
+Summarize: what files you created/modified and key results.`, cwd, taskDesc)
 }
 
 func makeSubTaskTool(cfg agentConfig, startTime time.Time) func(any) (string, error) {
