@@ -898,7 +898,13 @@ If verification failed, run_sub_task with specific fix instructions.
 - NEVER write code yourself — ALWAYS delegate via run_sub_task
 - Each sub-agent gets CLEAN context — include ALL needed info in task description
 - The moment a sub-agent reports success and files are written, VERIFY immediately
-- Budget: 900s total. Each sub-task max 300s. Don't waste time on exploration after minute 5.
+## TIME BUDGET (CRITICAL)
+- Total: 900 seconds. You WILL be killed at 900s. Plan accordingly.
+- MAX 1 exploration sub-task (60s). Then PLAN. Then IMPLEMENT.
+- MAX 2-3 implementation sub-tasks (300s each).
+- AFTER implementation: 1 verification sub-task (60s).
+- If you spend >120s on exploration, you WILL run out of time for coding.
+- ALWAYS implement by sub-task #3. If you haven't written code by sub-task #3, you're too slow.
 - Write the answer/output file EARLY — even partial. Improve later.`, cwd, cwd)
 }
 
