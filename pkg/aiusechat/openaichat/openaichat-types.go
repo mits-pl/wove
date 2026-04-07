@@ -21,8 +21,9 @@ type ChatRequest struct {
 	MaxTokens           int                  `json:"max_tokens,omitempty"`            // legacy
 	MaxCompletionTokens int                  `json:"max_completion_tokens,omitempty"` // newer
 	Temperature         float64              `json:"temperature,omitempty"`
-	Tools               []ToolDefinition     `json:"tools,omitempty"`       // if you use tools
-	ToolChoice          any                  `json:"tool_choice,omitempty"` // "auto", "none", or struct
+	Tools               []ToolDefinition     `json:"tools,omitempty"`           // if you use tools
+	ToolChoice          any                  `json:"tool_choice,omitempty"`     // "auto", "none", or struct
+	ReasoningSplit      bool                 `json:"reasoning_split,omitempty"` // MiniMax: separate reasoning from text
 }
 
 type StreamOptions struct {

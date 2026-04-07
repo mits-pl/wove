@@ -521,9 +521,29 @@ func RunAnthropicChatStep(
 		return nil, nil, nil, err
 	}
 
-	resp, err := httpClient.Do(req)
+	// Retry on connection failure or 500 errors
+	var resp *http.Response
+	for attempt := 0; attempt < 3; attempt++ {
+		resp, err = httpClient.Do(req)
+		if err == nil && resp.StatusCode != http.StatusInternalServerError {
+			break
+		}
+		if err == nil && resp.StatusCode == http.StatusInternalServerError {
+			resp.Body.Close()
+			log.Printf("[anthropic] server error 500 (attempt %d/3), retrying in %ds\n", attempt+1, (attempt+1)*2)
+		} else if err != nil {
+			log.Printf("[anthropic] request failed (attempt %d/3), retrying in %ds: %v\n", attempt+1, (attempt+1)*2, sanitizeHostnameInError(err))
+		}
+		if attempt < 2 {
+			time.Sleep(time.Duration((attempt+1)*2) * time.Second)
+			req, err = buildAnthropicHTTPRequest(ctx, anthropicMsgs, chatOpts)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+		}
+	}
 	if err != nil {
-		return nil, nil, nil, sanitizeHostnameInError(err)
+		return nil, nil, nil, fmt.Errorf("request failed after 3 retries: %w", sanitizeHostnameInError(err))
 	}
 	defer resp.Body.Close()
 

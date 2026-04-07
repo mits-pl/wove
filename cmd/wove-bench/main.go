@@ -25,7 +25,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/woveterm/wove/pkg/aiusechat"
-	"github.com/woveterm/wove/pkg/aiusechat/anthropic"
 	"github.com/woveterm/wove/pkg/aiusechat/chatstore"
 	"github.com/woveterm/wove/pkg/aiusechat/repomap"
 	"github.com/woveterm/wove/pkg/aiusechat/uctypes"
@@ -321,6 +320,59 @@ func doomLoopAlternatives(tool string, lastArg string) string {
 	}
 }
 
+// --- First-call documentation ---
+// Returns detailed usage guide on first invocation of each tool, empty string after.
+type toolDocs struct {
+	mu   sync.Mutex
+	seen map[string]bool
+	docs map[string]string
+}
+
+func newToolDocs() *toolDocs {
+	return &toolDocs{
+		seen: make(map[string]bool),
+		docs: map[string]string{
+			"bash": "[TOOL GUIDE] bash: Persistent terminal. State (cd, env, venv) preserved across calls. " +
+				"Default timeout 60s — pass timeout_sec for longer ops (pip install: 180, make: 120). " +
+				"NEVER apt-get install unless absolutely needed — check 'which X' first. curl/git/gcc are pre-installed. " +
+				"For LARGE/BINARY files: use 'grep -aob PATTERN file' (byte offset, instant). " +
+				"Then 'dd if=file bs=1 skip=OFFSET count=LEN' to extract data. " +
+				"AVOID 'strings file | grep' or 'hexdump file | grep' on files >1MB — will timeout.",
+			"read_file": "[TOOL GUIDE] read_file: Returns file with line numbers in <file> XML tags. " +
+				"Use offset/limit for large files. You MUST read a file before editing it.",
+			"write_file": "[TOOL GUIDE] write_file: Overwrites entire file. Creates parent dirs. " +
+				"Use edit_file for small changes instead of rewriting whole file.",
+			"edit_file": "[TOOL GUIDE] edit_file: Replace exact string match. old_string must be unique in file. " +
+				"You MUST read_file before editing. If old_string not found, re-read the file — content may have changed.",
+			"grep": "[TOOL GUIDE] grep: Regex search in files recursively. Returns file:line format. " +
+				"Use --include='*.py' to filter file types. Max 200 matches. " +
+				"For BINARY files: use bash with 'grep -aob PATTERN file' to get byte offsets fast. " +
+				"Then 'dd if=file bs=1 skip=OFFSET count=LENGTH' to extract. " +
+				"NEVER run 'strings file | grep' or 'hexdump | grep' on large files (>1MB) — they timeout. " +
+				"Use 'grep -aob' instead — it's instant even on 100MB files.",
+			"todo_write": "[TOOL GUIDE] todo_write: Replaces your entire plan. Call FIRST to plan, " +
+				"update after each step. Mark in_progress/completed to track progress.",
+			"web_search": "[TOOL GUIDE] web_search: DuckDuckGo search. Use for docs, examples, library APIs. " +
+				"Don't waste time searching after 10 minutes — focus on implementation.",
+			"repo_map": "[TOOL GUIDE] repo_map: Structural overview of codebase (classes, functions, types). " +
+				"Call BEFORE reading individual files to understand what exists. Much faster than reading every file.",
+		},
+	}
+}
+
+func (td *toolDocs) firstCallDoc(toolName string) string {
+	td.mu.Lock()
+	defer td.mu.Unlock()
+	if td.seen[toolName] {
+		return ""
+	}
+	td.seen[toolName] = true
+	if doc, ok := td.docs[toolName]; ok {
+		return doc + "\n\n"
+	}
+	return ""
+}
+
 // --- Error reflection wrapper ---
 // Wraps tool errors with reflection prompts.
 
@@ -359,7 +411,6 @@ func main() {
 		traceFile  string
 		verbose    bool
 		noPty      bool
-		noXMLRead  bool
 		noWeb      bool
 		noRepoMap  bool
 		noTodo     bool
@@ -377,7 +428,6 @@ func main() {
 	flag.StringVar(&traceFile, "trace", "", "Write JSONL tool-call trace to this file")
 	flag.BoolVar(&verbose, "verbose", false, "Print SSE stream to stderr")
 	flag.BoolVar(&noPty, "no-pty", false, "Disable persistent PTY terminal (use stateless bash)")
-	flag.BoolVar(&noXMLRead, "no-xml-read", false, "Use plain-text read_file output (no XML wrapping)")
 	flag.BoolVar(&noWeb, "no-web", false, "Disable web_search and web_fetch tools")
 	flag.BoolVar(&noRepoMap, "no-repo-map", false, "Disable repo_map tool")
 	flag.BoolVar(&noTodo, "no-todo", false, "Disable todo_write tool")
@@ -418,7 +468,6 @@ func main() {
 		SystemFile:  systemFile,
 		Verbose:     verbose,
 		NoPty:       noPty,
-		NoXMLRead:   noXMLRead,
 		NoWeb:       noWeb,
 		NoRepoMap:   noRepoMap,
 		NoTodo:      noTodo,
@@ -460,7 +509,6 @@ type agentConfig struct {
 	SystemFile  string
 	Verbose     bool
 	NoPty       bool
-	NoXMLRead   bool
 	NoWeb       bool
 	NoRepoMap   bool
 	NoTodo      bool
@@ -474,6 +522,7 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 	readFiles := newReadTracker()
 	writes := newWriteTracker()
 	todos := newTodoTracker()
+	docs := newToolDocs()
 	tracer := newToolTracer(cfg.TraceFile)
 	if tracer != nil {
 		defer tracer.close()
@@ -492,12 +541,24 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 	}
 
 	tools := buildStandaloneTools(cfg.CWD, doomDetector, readFiles, writes, termSession, todos, toolOpts{
-		NoXMLRead: cfg.NoXMLRead,
 		NoWeb:     cfg.NoWeb,
 		NoRepoMap: cfg.NoRepoMap,
 		NoTodo:    cfg.NoTodo,
 	})
-	// Wrap each tool callback with tracer
+	// Wrap each tool: first-call docs + tracer
+	for i := range tools {
+		name := tools[i].Name
+		origCb := tools[i].ToolTextCallback
+		tools[i].ToolTextCallback = func(input any) (string, error) {
+			result, err := origCb(input)
+			if err == nil {
+				if doc := docs.firstCallDoc(name); doc != "" {
+					result = doc + result
+				}
+			}
+			return result, err
+		}
+	}
 	if tracer != nil {
 		for i := range tools {
 			tools[i].ToolTextCallback = wrapTool(tracer, tools[i].Name, tools[i].ToolTextCallback)
@@ -539,6 +600,7 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 		Tools:            tools,
 		SystemPrompt:     systemPrompts,
 		CompactThreshold: 200000, // 200KB — MiniMax M2.7 has 200K token context
+		AutoApproveTools: true,   // bench: no UI approval, enables ForgeCode-style continuation
 		// StepTimeoutSec: 0 = disabled. Was 300 but may cut valid long responses.
 	}
 
@@ -555,7 +617,11 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 	}
 
 	// Strip thinking blocks from conversation history (saves context tokens for MiniMax)
-	anthropic.StripThinkingFromHistory = true
+	// Keep thinking in history — MiniMax Interleaved Thinking requires it.
+	// Mini-Agent docs: "CRITICAL for Interleaved Thinking to work properly!"
+	// Stripping breaks chain of thought and degrades quality.
+	// anthropic.StripThinkingFromHistory = false (default)
+	// openaichat.StripThinkTagsFromHistory = false (default)
 
 	// Initialize git for checkpoint/rollback support
 	initGitCheckpoint(cfg.CWD)
@@ -759,43 +825,41 @@ Be concise — lead with actions and results, not explanations.
 
 ## Strategy (CRITICAL — follow this exact order)
 
-### Phase 0: PLAN (1 turn, MANDATORY)
-Before anything else, call todo_write with 3-7 concrete steps breaking down the task. Mark the first as in_progress.
-Update the list after each step: set the next one to in_progress, mark the finished one completed.
-This keeps you on track and prevents drift. Do NOT skip this.
-
-### Phase 1: UNDERSTAND (1-3 turns)
-This is the MOST IMPORTANT phase. Invest time here to save time later.
+### Phase 1: EXPLORE (1-2 turns, read-only)
 On your FIRST turn, run these in parallel:
 - list_dir to see what files exist
 - bash: ls -la /tests/ 2>/dev/null; cat /tests/test*.py 2>/dev/null; cat /tests/test.sh 2>/dev/null
 - bash: find . -type f -name "*.py" -o -name "*.c" -o -name "*.js" -o -name "*.go" -o -name "*.rs" 2>/dev/null | head -30
-
+If project has 3+ code files, call repo_map to see structure.
 If /tests/ exists, read the tests — they tell you EXACTLY what the verifier expects.
-If /tests/ does NOT exist, focus on the task instruction:
-- Read it carefully — identify what files to create, what output format is expected
-- Look at existing files for clues about expected structure
-- Check README.md or any documentation files
 
-### Phase 2: IMPLEMENT — Start simple, iterate up (3-8 turns)
+### Phase 2: PLAN (1 turn, MANDATORY — after exploration)
+NOW call todo_write with 3-7 concrete steps based on what you DISCOVERED.
+CRITICAL — your plan must include:
+- Specific file paths you found (not "search for files" but "/app/varsea/disks/ae3f4c.dat")
+- Your ANALYSIS of what you found (not "recover data" but "file is a ZIP archive containing launchcode.txt, extract with unzip or dd")
+- Exact commands or approach for each step
+Generic plans like "search for X" WASTE TURNS. Put your reasoning INTO the plan steps.
+Update the plan AGAIN whenever you discover new facts. A good plan EVOLVES.
+
+### Phase 3: IMPLEMENT — Start simple, iterate up (3-8 turns)
 CRITICAL RULE: Start with the SIMPLEST possible solution.
 - First attempt should be 1-20 lines of code that handles the core case
 - Do NOT over-engineer on the first pass
 - Do NOT analyze input data for 10 turns before writing code — write code after 2 turns max
 
-### Phase 3: VERIFY your work
+### Phase 4: VERIFY your work
 If /tests/ exists: run bash /tests/test.sh 2>&1 and iterate on failures.
 If /tests/ does NOT exist: verify MANUALLY:
 - Run your code and check the output matches what the instruction asks
 - Check all required files exist at the expected paths
-- Test edge cases mentioned in the instruction
 - Do a final sanity check: re-read the instruction, compare with what you built
 
-### Phase 4: STUCK? — Reset and try differently
+### Phase 5: STUCK? — Reset and try differently
 If after 3 failed attempts at the same approach:
 1. Run: git checkout . (reset all changes)
 2. Re-read the task instruction from scratch
-3. Try a COMPLETELY different approach (different algorithm, different library, different structure)
+3. Try a COMPLETELY different approach
 Do not keep patching a broken approach. Fresh start is faster.
 
 ## Progressive Complexity
@@ -804,15 +868,16 @@ Do not keep patching a broken approach. Fresh start is faster.
 - Level 3: Edge cases, error handling, optimizations
 Start at Level 1. Only go to Level 2 if it fails. Only go to Level 3 if Level 2 fails.
 
-## Tool Usage
-Use tools proactively. When multiple tool calls are independent, execute them in parallel.
-Prefer edit_file over full file rewrites when making targeted changes.
-You MUST read a file before editing it.
+## Tool Tips (READ CAREFULLY)
+- bash: State persists (cd, env, venv). Default timeout 120s. Pass timeout_sec for longer ops.
+- read_file: Returns XML-tagged content with line numbers. Use offset/limit for large files. MUST read before edit.
+- edit_file: old_string must be unique. If not found, re-read file — content changed.
+- repo_map: Call FIRST on codebases with 3+ files. Shows classes/functions/types. Faster than reading every file.
+- grep: For TEXT files only. For BINARY files (disk images, .dat, .bin >1MB): use bash with 'grep -aob PATTERN file' for byte offset, then 'dd if=file bs=1 skip=OFFSET count=LEN'. NEVER 'strings file | grep' or 'hexdump | grep' on large binaries — they timeout.
+- web_search: Use for docs/APIs you don't know. Don't search after 10 minutes.
+- todo_write: Track your plan. Update after each step.
 
-CRITICAL — repo_map usage:
-- Call repo_map FIRST when exploring a codebase with 3+ code files (Python/JS/Go/C/Rust).
-- It returns structural overview: classes, functions, types per file. MUCH faster than reading every file.
-- Use BEFORE opening individual files — it tells you which file to read.
+Use tools in parallel when independent. Prefer edit_file over full rewrites.
 - Example: repo_map("/app") → see all functions/classes, then read just the relevant ones.
 
 ## Doom Loop Prevention
@@ -824,7 +889,8 @@ If repeating the same action more than twice:
 ## Write Early, Verify Often
 - Write a plausible solution EARLY (even if incomplete). Overwrite it later as you learn more.
 - Test/verify AFTER EVERY write or edit — do not batch 5 changes then test. One change → one test.
-- If you have evidence of the correct answer, write it to the output file NOW. Don't keep exploring.
+- CRITICAL: The moment you find the answer or produce output that matches requirements, WRITE IT TO THE OUTPUT FILE IMMEDIATELY. Do NOT keep searching, exploring, or verifying after you have a valid result. Write first, verify second.
+- If you find a password, key, flag, or answer — write it to the required file RIGHT NOW. Every extra turn exploring AFTER finding the answer is WASTED time.
 
 ## Hard Constraints First
 - Identify explicit hard constraints FIRST (byte limits, file counts, schema rules, compile requirements, specific formats).
@@ -879,7 +945,6 @@ If you wrote code but didn't test it, YOU ARE NOT DONE.`, cwd)
 
 // buildStandaloneTools creates filesystem/shell tools with doom-loop detection and read-before-edit enforcement.
 type toolOpts struct {
-	NoXMLRead bool
 	NoWeb     bool
 	NoRepoMap bool
 	NoTodo    bool
@@ -889,9 +954,10 @@ func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker
 	all := []uctypes.ToolDefinition{
 		{
 			Name:        "bash",
-			Description: "Execute a bash command in a PERSISTENT terminal session. State (cd, exports, venv, bg processes) is preserved across calls. Use for running tests, git commands, build tools.",
+			Description: "Run a bash command. State persists across calls.",
 			InputSchema: map[string]any{
-				"type": "object",
+				"type":     "object",
+				"required": []any{"command"},
 				"properties": map[string]any{
 					"command": map[string]any{
 						"type":        "string",
@@ -899,18 +965,18 @@ func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker
 					},
 					"timeout_sec": map[string]any{
 						"type":        "integer",
-						"description": "Timeout in seconds (default: 120)",
+						"description": "Timeout in seconds (default: 60)",
 					},
 				},
-				"required": []any{"command"},
 			},
 			ToolTextCallback: makeBashTool(cwd, doom, term),
 		},
 		{
 			Name:        "term_send_input",
-			Description: "Send raw input to the terminal (for interactive programs like vim, REPLs, prompts). Appends a newline automatically unless press_enter is false.",
+			Description: "Send input to terminal for interactive programs (vim, REPL).",
 			InputSchema: map[string]any{
-				"type": "object",
+				"type":     "object",
+				"required": []any{"text"},
 				"properties": map[string]any{
 					"text": map[string]any{
 						"type":        "string",
@@ -921,13 +987,12 @@ func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker
 						"description": "Append newline after text (default: true)",
 					},
 				},
-				"required": []any{"text"},
 			},
 			ToolTextCallback: makeTermSendInputTool(term),
 		},
 		{
 			Name:        "term_get_scrollback",
-			Description: "Read recent terminal output. Use after term_send_input to see the response from an interactive program.",
+			Description: "Read recent terminal output.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -941,9 +1006,10 @@ func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker
 		},
 		{
 			Name:        "read_file",
-			Description: "Read file contents with line numbers. Supports offset and limit for large files.",
+			Description: "Read file contents with line numbers.",
 			InputSchema: map[string]any{
-				"type": "object",
+				"type":     "object",
+				"required": []any{"path"},
 				"properties": map[string]any{
 					"path": map[string]any{
 						"type":        "string",
@@ -958,15 +1024,15 @@ func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker
 						"description": "Max lines to read (default: 2000)",
 					},
 				},
-				"required": []any{"path"},
 			},
-			ToolTextCallback: makeReadFileTool(cwd, doom, reads, opts.NoXMLRead),
+			ToolTextCallback: makeReadFileTool(cwd, doom, reads),
 		},
 		{
 			Name:        "write_file",
-			Description: "Write content to a file. Creates parent directories. Overwrites existing file.",
+			Description: "Write content to a file. Creates dirs if needed.",
 			InputSchema: map[string]any{
-				"type": "object",
+				"type":     "object",
+				"required": []any{"path", "content"},
 				"properties": map[string]any{
 					"path": map[string]any{
 						"type":        "string",
@@ -977,15 +1043,15 @@ func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker
 						"description": "Full file content",
 					},
 				},
-				"required": []any{"path", "content"},
 			},
 			ToolTextCallback: makeWriteFileTool(cwd, doom, reads, writes),
 		},
 		{
 			Name:        "edit_file",
-			Description: "Edit a file by replacing an exact string match. old_string must appear exactly once. You MUST read_file before editing.",
+			Description: "Replace exact string in file. Must read_file first.",
 			InputSchema: map[string]any{
-				"type": "object",
+				"type":     "object",
+				"required": []any{"path", "old_string", "new_string"},
 				"properties": map[string]any{
 					"path": map[string]any{
 						"type":        "string",
@@ -1000,13 +1066,12 @@ func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker
 						"description": "Replacement string",
 					},
 				},
-				"required": []any{"path", "old_string", "new_string"},
 			},
 			ToolTextCallback: makeEditFileTool(cwd, doom, reads),
 		},
 		{
 			Name:        "grep",
-			Description: "Search for a regex pattern in files recursively. Returns matching lines with file:line format. Use for finding code patterns, function definitions, and references.",
+			Description: "Search for regex pattern in files recursively.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"required": []any{"pattern"},
@@ -1029,7 +1094,7 @@ func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker
 		},
 		{
 			Name:        "list_dir",
-			Description: "List files and directories. Returns names with / suffix for directories.",
+			Description: "List files and directories.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -1043,7 +1108,7 @@ func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker
 		},
 		{
 			Name:        "repo_map",
-			Description: "Generate a structural map of the codebase showing classes, functions, types. Faster than reading files individually. Use to quickly understand what exists in a project.",
+			Description: "Structural overview of codebase: classes, functions, types.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -1061,7 +1126,7 @@ func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker
 		},
 		{
 			Name:        "web_search",
-			Description: "Search the web. Use when you need documentation, examples, or solutions you don't know.",
+			Description: "Search the web for docs, examples, solutions.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"required": []any{"query"},
@@ -1076,7 +1141,7 @@ func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker
 		},
 		{
 			Name:        "web_fetch",
-			Description: "Fetch a URL and return its content as text. Use to read documentation, GitHub files, or API docs.",
+			Description: "Fetch URL content as text.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"required": []any{"url"},
@@ -1091,24 +1156,24 @@ func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker
 		},
 		{
 			Name:        "todo_write",
-			Description: "Maintain a plan as a todo list. ALWAYS call this FIRST to break the task into 3-7 concrete steps. Update after each step: set in_progress when starting, completed when done. Replaces the full list on each call.",
+			Description: "Plan as todo list. Call FIRST, update after each step.",
 			InputSchema: map[string]any{
-				"type": "object",
+				"type":     "object",
+				"required": []any{"todos"},
 				"properties": map[string]any{
 					"todos": map[string]any{
 						"type":        "array",
 						"description": "Full list of todos (replaces previous list)",
 						"items": map[string]any{
-							"type": "object",
+							"type":     "object",
+							"required": []any{"content", "status"},
 							"properties": map[string]any{
 								"content": map[string]any{"type": "string", "description": "What to do"},
 								"status":  map[string]any{"type": "string", "enum": []any{"pending", "in_progress", "completed"}},
 							},
-							"required": []any{"content", "status"},
 						},
 					},
 				},
-				"required": []any{"todos"},
 			},
 			ToolTextCallback: makeTodoWriteTool(todos),
 		},
@@ -1218,7 +1283,7 @@ func makeBashTool(cwd string, doom *doomLoopDetector, term *terminalSession) fun
 			return "<DOOM_LOOP_DETECTED>You ran the same bash command 3 times. All file changes ROLLED BACK to last checkpoint. Alternatives to try:\n" + doomLoopAlternatives("bash", command) + "\nDo NOT retry the same command.</DOOM_LOOP_DETECTED>", nil
 		}
 
-		timeoutSec := 60
+		timeoutSec := 120
 		if ts, ok := getFloat(input, "timeout_sec"); ok && ts > 0 {
 			timeoutSec = int(ts)
 		}
@@ -1310,7 +1375,7 @@ func makeTermGetScrollbackTool(term *terminalSession) func(any) (string, error) 
 	}
 }
 
-func makeReadFileTool(cwd string, doom *doomLoopDetector, reads *readTracker, plain bool) func(any) (string, error) {
+func makeReadFileTool(cwd string, doom *doomLoopDetector, reads *readTracker) func(any) (string, error) {
 	return func(input any) (string, error) {
 		path := getStr(input, "path")
 		if path == "" {
@@ -1351,29 +1416,14 @@ func makeReadFileTool(cwd string, doom *doomLoopDetector, reads *readTracker, pl
 		}
 
 		var sb strings.Builder
-		if plain {
-			// Plain-text output (simple, no XML wrapping)
-			for i := offset; i < end; i++ {
-				fmt.Fprintf(&sb, "%d\t%s\n", i+1, lines[i])
-			}
-			if end < len(lines) {
-				fmt.Fprintf(&sb, "... [%d more lines — call read_file with offset=%d to continue]\n", len(lines)-end, end)
-			}
-		} else {
-			// XML-structured output with metadata attributes
-			fmt.Fprintf(&sb, "<file path=\"%s\" display_lines=\"%d-%d\" total_lines=\"%d\"", path, offset+1, end, len(lines))
-			if end < len(lines) {
-				fmt.Fprintf(&sb, " truncated=\"true\" remaining_lines=\"%d\" next_offset=\"%d\"", len(lines)-end, end)
-			}
-			sb.WriteString(">\n")
-			for i := offset; i < end; i++ {
-				fmt.Fprintf(&sb, "%d\t%s\n", i+1, lines[i])
-			}
-			if end < len(lines) {
-				fmt.Fprintf(&sb, "... [%d more lines — call read_file again with offset=%d to continue]\n", len(lines)-end, end)
-			}
-			sb.WriteString("</file>")
+		fmt.Fprintf(&sb, "<file path=\"%s\" lines=\"%d-%d\" total=\"%d\">\n", path, offset+1, end, len(lines))
+		for i := offset; i < end; i++ {
+			fmt.Fprintf(&sb, "%d\t%s\n", i+1, lines[i])
 		}
+		if end < len(lines) {
+			fmt.Fprintf(&sb, "... [%d more lines — read_file offset=%d]\n", len(lines)-end, end)
+		}
+		sb.WriteString("</file>")
 		return sb.String(), nil
 	}
 }

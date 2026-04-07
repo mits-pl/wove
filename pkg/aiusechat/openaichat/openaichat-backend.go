@@ -92,17 +92,21 @@ func RunChatStep(
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	// Retry once on connection failure (MiniMax drops connections under load)
+	// Retry on connection failure or 500 errors (MiniMax drops connections under load)
 	var resp *http.Response
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := 0; attempt < 3; attempt++ {
 		resp, err = client.Do(req)
-		if err == nil {
+		if err == nil && resp.StatusCode != http.StatusInternalServerError {
 			break
 		}
-		if attempt == 0 {
-			log.Printf("[openaichat] request failed (attempt 1), retrying in 2s: %v\n", err)
-			time.Sleep(2 * time.Second)
-			// Rebuild request (body was consumed)
+		if err == nil && resp.StatusCode == http.StatusInternalServerError {
+			resp.Body.Close()
+			log.Printf("[openaichat] server error 500 (attempt %d/3), retrying in %ds\n", attempt+1, (attempt+1)*2)
+		} else if err != nil {
+			log.Printf("[openaichat] request failed (attempt %d/3), retrying in %ds: %v\n", attempt+1, (attempt+1)*2, err)
+		}
+		if attempt < 2 {
+			time.Sleep(time.Duration((attempt+1)*2) * time.Second)
 			req, err = buildChatHTTPRequest(ctx, messages, chatOpts)
 			if err != nil {
 				return nil, nil, nil, err
@@ -110,7 +114,7 @@ func RunChatStep(
 		}
 	}
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("request failed after retry: %w", err)
+		return nil, nil, nil, fmt.Errorf("request failed after 3 retries: %w", err)
 	}
 	defer resp.Body.Close()
 	log.Printf("[openaichat] response status: %d\n", resp.StatusCode)
@@ -329,6 +333,24 @@ func modelUsesThinkTags(model string) bool {
 	return false
 }
 
+// StripThinkTagsFromHistory removes <think>...</think> from stored messages.
+// Set to true for bench runs to prevent context bloat from MiniMax/DeepSeek reasoning.
+var StripThinkTagsFromHistory bool
+
+func stripThinkTags(s string) string {
+	for {
+		start := strings.Index(s, thinkOpenTag)
+		if start == -1 {
+			return s
+		}
+		end := strings.Index(s[start:], thinkCloseTag)
+		if end == -1 {
+			return s[:start] // unclosed tag, strip from tag to end
+		}
+		s = s[:start] + s[start+end+len(thinkCloseTag):]
+	}
+}
+
 func processChatStream(
 	ctx context.Context,
 	body io.Reader,
@@ -497,14 +519,20 @@ func processChatStream(
 		Usage: streamUsage,
 	}
 
-	// Store full raw content (including <think> tags) to preserve thinking in conversation history
+	// Store content for conversation history.
+	// Strip <think> tags to prevent context bloat on models that embed reasoning
+	// (MiniMax, DeepSeek). Model generates fresh thinking each turn anyway.
+	content := parser.contentBuilder.String()
+	if StripThinkTagsFromHistory && parser.parseThinkTags {
+		content = stripThinkTags(content)
+	}
 	if len(validToolCalls) > 0 {
 		assistantMsg.Message.ToolCalls = validToolCalls
-		if parser.contentBuilder.Len() > 0 {
-			assistantMsg.Message.Content = parser.contentBuilder.String()
+		if len(content) > 0 {
+			assistantMsg.Message.Content = content
 		}
 	} else {
-		assistantMsg.Message.Content = parser.contentBuilder.String()
+		assistantMsg.Message.Content = content
 	}
 
 	// Send usage data to frontend

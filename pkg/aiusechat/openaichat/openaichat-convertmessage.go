@@ -120,6 +120,11 @@ func buildChatHTTPRequest(ctx context.Context, messages []ChatRequestMessage, ch
 		reqBody.MaxTokens = maxTokens
 	}
 
+	// MiniMax Interleaved Thinking: reasoning_split separates thinking from text
+	if strings.Contains(strings.ToLower(opts.Model), "minimax") {
+		reqBody.ReasoningSplit = true
+	}
+
 	// Add tool definitions if tools capability is available and tools exist
 	var allTools []uctypes.ToolDefinition
 	if opts.HasCapability(uctypes.AICapabilityTools) {

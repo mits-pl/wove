@@ -590,6 +590,19 @@ func RunAIChat(ctx context.Context, sseHandler *sse.SSEHandlerCh, backend UseCha
 			}
 			continue
 		}
+		// ForgeCode-style continuation: if model didn't explicitly stop and has no tool calls,
+		// continue the loop (model may be "thinking" without acting yet).
+		// Only applies to bench/headless mode (AutoApproveTools = true).
+		if stopReason != nil && stopReason.Kind != uctypes.StopKindDone && stopReason.Kind != uctypes.StopKindToolUse &&
+			stopReason.Kind != uctypes.StopKindError && stopReason.Kind != uctypes.StopKindCanceled &&
+			chatOpts.AutoApproveTools {
+			log.Printf("[continuation] model returned %s without tool calls — continuing (turn %d)\n", stopReason.Kind, metrics.RequestCount)
+			cont = &uctypes.WaveContinueResponse{
+				Model:            chatOpts.Config.Model,
+				ContinueFromKind: stopReason.Kind,
+			}
+			continue
+		}
 		if stopReason != nil && stopReason.Kind == uctypes.StopKindToolUse {
 			metrics.ToolUseCount += len(stopReason.ToolCalls)
 			// Track tool calls for structured compaction summary
