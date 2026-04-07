@@ -169,10 +169,10 @@ class WoveAgent(BaseAgent):
         # Feature toggle flags — read from host env vars (set by lab test script)
         for env_var, flag in [
             ("WOVE_NO_PTY", "--no-pty"),
-            ("WOVE_NO_XML_READ", "--no-xml-read"),
             ("WOVE_NO_WEB", "--no-web"),
             ("WOVE_NO_REPO_MAP", "--no-repo-map"),
             ("WOVE_NO_TODO", "--no-todo"),
+            ("WOVE_ORCHESTRATOR", "--orchestrator"),
         ]:
             if os.environ.get(env_var):
                 cmd_parts.append(flag)

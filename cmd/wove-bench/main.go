@@ -16,6 +16,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -413,7 +414,8 @@ func main() {
 		noPty      bool
 		noWeb      bool
 		noRepoMap  bool
-		noTodo     bool
+		noTodo       bool
+		orchestrator bool
 	)
 
 	flag.StringVar(&model, "model", "MiniMax-M2.7-highspeed", "AI model name")
@@ -431,6 +433,7 @@ func main() {
 	flag.BoolVar(&noWeb, "no-web", false, "Disable web_search and web_fetch tools")
 	flag.BoolVar(&noRepoMap, "no-repo-map", false, "Disable repo_map tool")
 	flag.BoolVar(&noTodo, "no-todo", false, "Disable todo_write tool")
+	flag.BoolVar(&orchestrator, "orchestrator", false, "Enable orchestrator mode: main agent delegates to sub-agents")
 	flag.Parse()
 
 	if apiKey == "" {
@@ -470,8 +473,9 @@ func main() {
 		NoPty:       noPty,
 		NoWeb:       noWeb,
 		NoRepoMap:   noRepoMap,
-		NoTodo:      noTodo,
-		TraceFile:   traceFile,
+		NoTodo:       noTodo,
+		TraceFile:    traceFile,
+		Orchestrator: orchestrator,
 	})
 
 	metricsJSON, _ := json.MarshalIndent(metrics, "", "  ")
@@ -511,8 +515,9 @@ type agentConfig struct {
 	NoPty       bool
 	NoWeb       bool
 	NoRepoMap   bool
-	NoTodo      bool
-	TraceFile   string
+	NoTodo       bool
+	TraceFile    string
+	Orchestrator bool
 }
 
 func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
@@ -545,7 +550,41 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 		NoRepoMap: cfg.NoRepoMap,
 		NoTodo:    cfg.NoTodo,
 	})
-	// Wrap each tool: first-call docs + tracer
+	// Orchestrator mode: replace tools and prompt (BEFORE wrapping with docs/tracer)
+	if cfg.Orchestrator {
+		log.Printf("[orchestrator] enabled — delegating to sub-agents\n")
+		orchTools := []uctypes.ToolDefinition{
+			{
+				Name:        "run_sub_task",
+				Description: "Delegate a task to a sub-agent with clean context. Sub-agent has full tools (bash, read/write files, grep, etc).",
+				InputSchema: map[string]any{
+					"type":     "object",
+					"required": []any{"task"},
+					"properties": map[string]any{
+						"task": map[string]any{
+							"type":        "string",
+							"description": "Detailed task description. Include ALL context: file paths, expected format, specific commands. Sub-agent has NO memory of previous steps.",
+						},
+						"timeout_sec": map[string]any{
+							"type":        "integer",
+							"description": "Max seconds for sub-task (default: 300)",
+						},
+					},
+				},
+				ToolTextCallback: makeSubTaskTool(cfg, startTime),
+			},
+		}
+		// Only todo_write and list_dir. NO bash — if model hallucinates bash, it gets
+		// "tool not found" error which teaches it to use run_sub_task instead.
+		for _, t := range tools {
+			if t.Name == "todo_write" || t.Name == "list_dir" {
+				orchTools = append(orchTools, t)
+			}
+		}
+		tools = orchTools
+	}
+
+	// Wrap each tool: first-call docs + tracer (AFTER orchestrator filter)
 	for i := range tools {
 		name := tools[i].Name
 		origCb := tools[i].ToolTextCallback
@@ -565,7 +604,12 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 		}
 	}
 
-	systemPrompts := []string{buildSystemPrompt(cfg.CWD)}
+	var systemPrompts []string
+	if cfg.Orchestrator {
+		systemPrompts = []string{buildOrchestratorPrompt(cfg.CWD)}
+	} else {
+		systemPrompts = []string{buildSystemPrompt(cfg.CWD)}
+	}
 	if cfg.SystemFile != "" {
 		if data, err := os.ReadFile(cfg.SystemFile); err == nil {
 			systemPrompts = append(systemPrompts, string(data))
@@ -807,6 +851,230 @@ Do NOT skip verification.`},
 		result.Turns = aiMetrics.RequestCount
 	}
 	return result
+}
+
+// --- Orchestrator + Worker Architecture ---
+
+func buildOrchestratorPrompt(cwd string) string {
+	return fmt.Sprintf(`## CRITICAL RULE — READ FIRST
+You are an ORCHESTRATOR. ALWAYS delegate ALL work via run_sub_task.
+ALWAYS use run_sub_task for ALL work: exploring, writing code, running tests, searching files.
+Your ONLY job: plan with todo_write → delegate each step via run_sub_task → verify via run_sub_task.
+EVERY step MUST go through run_sub_task. You have NO bash, NO file tools. Only run_sub_task and todo_write.
+
+## Identity
+You are a task orchestrator managing sub-agents to solve coding tasks.
+Working directory: %s
+
+## Your Tools (ONLY these)
+- run_sub_task: Delegate work to a sub-agent with clean context. Your MAIN tool.
+- todo_write: Create and update your execution plan.
+- list_dir: See directory structure (quick overview only).
+
+## Workflow (follow EXACTLY)
+
+### Step 1: Quick Look
+Run bash to see what's in the working directory: ls -la, check /tests/ existence.
+
+### Step 2: Explore via Sub-Agent
+run_sub_task: "Explore the project in %s. List ALL files, read key source files, check /tests/ for test scripts. Report: (1) what files exist, (2) what tests expect, (3) what needs to be built."
+
+### Step 3: Plan
+Call todo_write with 3-7 SPECIFIC steps based on exploration results. Each step must include exact file paths and commands.
+
+### Step 4: Execute Each Step
+For each plan step, call run_sub_task with a DETAILED description:
+- Include ALL context the sub-agent needs (file paths, expected format, specific requirements)
+- Sub-agent has NO memory of previous steps — include everything
+- Reference files created by previous steps if needed
+
+### Step 5: Verify
+run_sub_task: "Verify the solution: run tests if /tests/ exists, check all required output files, validate format."
+
+### Step 6: Fix (if needed)
+If verification failed, run_sub_task with specific fix instructions.
+
+## Rules
+- NEVER write code yourself — ALWAYS delegate via run_sub_task
+- Each sub-agent gets CLEAN context — include ALL needed info in task description
+- The moment a sub-agent reports success and files are written, VERIFY immediately
+- Budget: 900s total. Each sub-task max 300s. Don't waste time on exploration after minute 5.
+- Write the answer/output file EARLY — even partial. Improve later.`, cwd, cwd)
+}
+
+func buildWorkerPrompt(cwd, taskDesc string) string {
+	return fmt.Sprintf(`## Identity
+You are a focused worker agent executing a specific sub-task.
+Working directory: %s
+
+## Your Task
+%s
+
+## Rules
+- Complete the task thoroughly and report what you did
+- Write results to files as instructed
+- If you find the answer/solution, WRITE IT TO THE OUTPUT FILE IMMEDIATELY
+- When done, summarize: what files you created/modified and the key results
+- You have max 300 seconds — be efficient, start coding early
+
+## Tool Tips
+- bash: State persists. Default timeout 120s. For binary files >1MB use 'grep -aob' not 'strings|grep'.
+- read_file: Returns content with line numbers. Use offset/limit for large files. MUST read before edit.
+- edit_file: old_string must be unique. Re-read file if match fails.
+- repo_map: Call first on codebases with 3+ files to see structure.`, cwd, taskDesc)
+}
+
+func makeSubTaskTool(cfg agentConfig, startTime time.Time) func(any) (string, error) {
+	return func(input any) (string, error) {
+		taskDesc := getStr(input, "task")
+		if taskDesc == "" {
+			return "", fmt.Errorf("task description is required")
+		}
+
+		timeoutSec := 300
+		if ts, ok := getFloat(input, "timeout_sec"); ok && ts > 0 {
+			timeoutSec = int(ts)
+		}
+
+		// Time budget: don't exceed parent's remaining time minus 60s reserve
+		elapsed := time.Since(startTime)
+		remaining := 900*time.Second - elapsed - 60*time.Second
+		if remaining < 30*time.Second {
+			return "TIME_BUDGET_EXCEEDED: Less than 90 seconds remaining. Cannot start new sub-task. Write your best answer NOW.", nil
+		}
+		if time.Duration(timeoutSec)*time.Second > remaining {
+			timeoutSec = int(remaining.Seconds())
+		}
+
+		log.Printf("[sub-task] starting: %s (timeout=%ds, elapsed=%ds)\n", taskDesc[:min(80, len(taskDesc))], timeoutSec, int(elapsed.Seconds()))
+
+		// Create isolated context
+		subCtx, subCancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
+		defer subCancel()
+
+		subChatId := uuid.New().String()
+		workerPrompt := buildWorkerPrompt(cfg.CWD, taskDesc)
+
+		// Build worker tools (full toolset)
+		doom := newDoomLoopDetector()
+		reads := newReadTracker()
+		writes := newWriteTracker()
+		todos := newTodoTracker()
+		var termSession *terminalSession
+		if !cfg.NoPty {
+			var termErr error
+			termSession, termErr = newTerminalSession(cfg.CWD)
+			if termErr != nil {
+				log.Printf("[sub-task] terminal failed: %v\n", termErr)
+			}
+			if termSession != nil {
+				defer termSession.close()
+			}
+		}
+
+		workerTools := buildStandaloneTools(cfg.CWD, doom, reads, writes, termSession, todos, toolOpts{
+			NoWeb:     cfg.NoWeb,
+			NoRepoMap: cfg.NoRepoMap,
+			NoTodo:    false, // workers always get todo
+		})
+
+		// API config
+		opts := &uctypes.AIOptsType{
+			APIType:      cfg.APIType,
+			Model:        cfg.Model,
+			Endpoint:     cfg.Endpoint,
+			APIToken:     cfg.APIKey,
+			MaxTokens:    16384,
+			Capabilities: []string{uctypes.AICapabilityTools},
+		}
+
+		workerChatOpts := uctypes.WaveChatOpts{
+			ChatId:           subChatId,
+			ClientId:         uuid.New().String(),
+			Config:           *opts,
+			Tools:            workerTools,
+			SystemPrompt:     []string{workerPrompt},
+			AutoApproveTools: true,
+			CompactThreshold: 200000,
+		}
+
+		// Initial message: the task
+		aiMessage := &uctypes.AIMessage{
+			MessageId: uuid.New().String(),
+			Parts:     []uctypes.AIMessagePart{{Type: uctypes.AIMessagePartTypeText, Text: taskDesc}},
+		}
+
+		backend, err := aiusechat.GetBackendByAPIType(workerChatOpts.Config.APIType)
+		if err != nil {
+			return "", fmt.Errorf("sub-task backend error: %v", err)
+		}
+
+		convertedMessage, err := backend.ConvertAIMessageToNativeChatMessage(*aiMessage)
+		if err != nil {
+			return "", fmt.Errorf("sub-task message error: %v", err)
+		}
+		if err := chatstore.DefaultChatStore.PostMessage(workerChatOpts.ChatId, &workerChatOpts.Config, convertedMessage); err != nil {
+			return "", fmt.Errorf("sub-task chatstore error: %v", err)
+		}
+
+		// Run worker with buffered SSE handler
+		recorder := httptest.NewRecorder()
+		sseHandler := sse.MakeSSEHandlerCh(recorder, subCtx)
+
+		workerMetrics, runErr := aiusechat.RunAIChat(subCtx, sseHandler, backend, workerChatOpts)
+		if runErr != nil {
+			log.Printf("[sub-task] error: %v\n", runErr)
+		}
+
+		// Extract result from last assistant message in chatstore
+		result := "Sub-task completed."
+		if workerMetrics != nil {
+			result = fmt.Sprintf("Sub-task completed: %d turns, %d tool calls, %ds.",
+				workerMetrics.RequestCount, workerMetrics.ToolUseCount,
+				int(time.Since(startTime).Seconds()))
+			log.Printf("[sub-task] done: turns=%d tools=%d in=%d out=%d\n",
+				workerMetrics.RequestCount, workerMetrics.ToolUseCount,
+				workerMetrics.Usage.InputTokens, workerMetrics.Usage.OutputTokens)
+		}
+
+		// Get last assistant text from chatstore
+		chat := chatstore.DefaultChatStore.Get(subChatId)
+		if chat != nil {
+			for i := len(chat.NativeMessages) - 1; i >= 0; i-- {
+				msg := chat.NativeMessages[i]
+				if msg.GetRole() == "assistant" {
+					// Use content size as indicator, extract via recorder output
+					if msg.GetContentSize() > 0 {
+						result = fmt.Sprintf("Sub-task completed (%d turns, %d tools). Check files in %s for results.",
+							workerMetrics.RequestCount, workerMetrics.ToolUseCount, cfg.CWD)
+					}
+					break
+				}
+			}
+		}
+
+		// Also capture SSE recorder output for summary
+		recOutput := recorder.Body.String()
+		if len(recOutput) > 100 {
+			// Extract text deltas from SSE for summary
+			var lastText string
+			for _, line := range strings.Split(recOutput, "\n") {
+				if strings.Contains(line, "text-delta") || strings.Contains(line, "text_delta") {
+					lastText = line
+				}
+			}
+			if lastText != "" && len(lastText) > len(result) {
+				result = lastText
+			}
+		}
+
+		// Truncate for orchestrator context
+		if len(result) > 3000 {
+			result = result[:3000] + "\n... [truncated]"
+		}
+
+		return result, nil
+	}
 }
 
 func buildSystemPrompt(cwd string) string {
