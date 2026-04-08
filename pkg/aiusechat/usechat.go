@@ -392,23 +392,53 @@ func processAllToolCalls(backend UseChatBackend, stopReason *uctypes.WaveStopRea
 	}
 	// At this point, all ToolCalls are guaranteed to have non-nil ToolUseData
 
-	var toolResults []uctypes.AIToolResult
+	toolResults := make([]uctypes.AIToolResult, len(stopReason.ToolCalls))
 	// Track file extensions of modified files for warm context injection
 	modifiedExts := make(map[string]bool)
-	for _, toolCall := range stopReason.ToolCalls {
-		if sseHandler.Err() != nil {
-			log.Printf("AI tool processing stopped: %v\n", sseHandler.Err())
-			break
+
+	// Run tool calls in parallel when multiple are requested (like ForgeCode)
+	if len(stopReason.ToolCalls) > 1 && chatOpts.AutoApproveTools {
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		for i, toolCall := range stopReason.ToolCalls {
+			if sseHandler.Err() != nil {
+				break
+			}
+			wg.Add(1)
+			go func(idx int, tc uctypes.WaveToolCall) {
+				defer wg.Done()
+				result := processToolCall(backend, tc, chatOpts, sseHandler, metrics)
+				mu.Lock()
+				toolResults[idx] = result
+				if tc.Name == "write_text_file" || tc.Name == "edit_text_file" {
+					if inputMap, ok := tc.Input.(map[string]any); ok {
+						if filename, ok := inputMap["filename"].(string); ok {
+							ext := filepath.Ext(filename)
+							if ext != "" {
+								modifiedExts[ext] = true
+							}
+						}
+					}
+				}
+				mu.Unlock()
+			}(i, toolCall)
 		}
-		result := processToolCall(backend, toolCall, chatOpts, sseHandler, metrics)
-		toolResults = append(toolResults, result)
-		// Collect file extensions from write/edit tool calls
-		if toolCall.Name == "write_text_file" || toolCall.Name == "edit_text_file" {
-			if inputMap, ok := toolCall.Input.(map[string]any); ok {
-				if filename, ok := inputMap["filename"].(string); ok {
-					ext := filepath.Ext(filename)
-					if ext != "" {
-						modifiedExts[ext] = true
+		wg.Wait()
+	} else {
+		// Sequential execution (GUI mode or single tool call)
+		for i, toolCall := range stopReason.ToolCalls {
+			if sseHandler.Err() != nil {
+				log.Printf("AI tool processing stopped: %v\n", sseHandler.Err())
+				break
+			}
+			toolResults[i] = processToolCall(backend, toolCall, chatOpts, sseHandler, metrics)
+			if toolCall.Name == "write_text_file" || toolCall.Name == "edit_text_file" {
+				if inputMap, ok := toolCall.Input.(map[string]any); ok {
+					if filename, ok := inputMap["filename"].(string); ok {
+						ext := filepath.Ext(filename)
+						if ext != "" {
+							modifiedExts[ext] = true
+						}
 					}
 				}
 			}

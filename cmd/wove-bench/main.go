@@ -550,41 +550,28 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 		NoRepoMap: cfg.NoRepoMap,
 		NoTodo:    cfg.NoTodo,
 	})
-	// Orchestrator mode: replace tools and prompt (BEFORE wrapping with docs/tracer)
-	if cfg.Orchestrator {
-		log.Printf("[orchestrator] enabled — delegating to sub-agents\n")
-		orchTools := []uctypes.ToolDefinition{
-			{
-				Name:        "run_sub_task",
-				Description: "Delegate a task to a sub-agent with clean context. Sub-agent has full tools (bash, read/write files, grep, etc).",
-				InputSchema: map[string]any{
-					"type":     "object",
-					"required": []any{"task"},
-					"properties": map[string]any{
-						"task": map[string]any{
-							"type":        "string",
-							"description": "Detailed task description. Include ALL context: file paths, expected format, specific commands. Sub-agent has NO memory of previous steps.",
-						},
-						"timeout_sec": map[string]any{
-							"type":        "integer",
-							"description": "Max seconds for sub-task (default: 300)",
-						},
-					},
+	// Hybrid mode: full toolset + run_sub_task for delegation (like ForgeCode Forge agent)
+	tools = append(tools, uctypes.ToolDefinition{
+		Name:        "run_sub_task",
+		Description: "Delegate a complex sub-task to a worker agent with clean context. Worker has full tools. Use when context is large or task has independent parts.",
+		InputSchema: map[string]any{
+			"type":     "object",
+			"required": []any{"task"},
+			"properties": map[string]any{
+				"task": map[string]any{
+					"type":        "string",
+					"description": "Detailed task description with ALL context. Worker has NO memory of your conversation.",
 				},
-				ToolTextCallback: makeSubTaskTool(cfg, startTime),
+				"timeout_sec": map[string]any{
+					"type":        "integer",
+					"description": "Max seconds (default: 300)",
+				},
 			},
-		}
-		// Only todo_write and list_dir. NO bash — if model hallucinates bash, it gets
-		// "tool not found" error which teaches it to use run_sub_task instead.
-		for _, t := range tools {
-			if t.Name == "todo_write" || t.Name == "list_dir" {
-				orchTools = append(orchTools, t)
-			}
-		}
-		tools = orchTools
-	}
+		},
+		ToolTextCallback: makeSubTaskTool(cfg, startTime),
+	})
 
-	// Wrap each tool: first-call docs + tracer (AFTER orchestrator filter)
+	// Wrap each tool: first-call docs + tracer
 	for i := range tools {
 		name := tools[i].Name
 		origCb := tools[i].ToolTextCallback
@@ -604,12 +591,7 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 		}
 	}
 
-	var systemPrompts []string
-	if cfg.Orchestrator {
-		systemPrompts = []string{buildOrchestratorPrompt(cfg.CWD)}
-	} else {
-		systemPrompts = []string{buildSystemPrompt(cfg.CWD)}
-	}
+	systemPrompts := []string{buildSystemPrompt(cfg.CWD)}
 	if cfg.SystemFile != "" {
 		if data, err := os.ReadFile(cfg.SystemFile); err == nil {
 			systemPrompts = append(systemPrompts, string(data))
@@ -877,23 +859,36 @@ Working directory: %s
 Run bash to see what's in the working directory: ls -la, check /tests/ existence.
 
 ### Step 2: Explore via Sub-Agent (ONE sub-task only!)
-run_sub_task with this EXACT task: "You are a research agent. Explore %s THOROUGHLY in ONE pass. Do ALL of this:
-1. ls -laR to see ALL files
-2. Read /tests/test*.py or /tests/test.sh if they exist — report EXACTLY what tests check
-3. Read key source files (*.py, *.c, *.js etc.) — report structure, functions, imports
-4. Check README.md or instruction files
-5. Report file sizes, types, binary vs text
-Return a COMPLETE report. This is your ONLY chance — no follow-up questions."
+run_sub_task with a task like: "Research agent: explore %s and report a STRUCTURED summary.
+Priority order:
+1. TESTS FIRST: Read /tests/test*.py or /tests/test.sh — report EXACTLY what verifier checks (expected files, formats, values)
+2. EXISTING CODE: Use repo_map to see all functions/classes. Read key source files fully.
+3. DATA: ls -laR, file sizes, binary vs text. For binary files report: file type, size, structure hints.
+4. DEPENDENCIES: Check pyproject.toml, package.json, Makefile, CMakeLists.txt — what build tools needed?
+
+Output format — use these EXACT sections:
+## Tests Expect
+[what the verifier checks — files, formats, values]
+## Existing Code
+[functions, classes, structure]
+## Files
+[list with sizes and types]
+## Dependencies
+[build tools, packages needed]
+
+IMPORTANT: Save your complete report to /tmp/exploration_report.txt using write_file. This file will be read by the implementation agent."
 
 ### Step 3: Plan (IMMEDIATELY after exploration)
 Call todo_write with 3-5 SPECIFIC steps. Each step references exact file paths from exploration.
 
 ### Step 4: Implement (1-2 sub-tasks MAX)
-run_sub_task with DETAILED description including:
-- ALL context from exploration (file paths, test expectations, format requirements)
-- EXACT code to write or approach to take
-- Sub-agent has NO memory — include EVERYTHING it needs
-Combine related steps into ONE sub-task. Fewer sub-tasks = faster.
+run_sub_task with DETAILED description. ALWAYS include:
+- "Read exploration_report.txt first for full context"
+- Copy-paste ALL constraints from the original task instruction (size limits, format requirements, specific values)
+- EXACT file paths to create
+- Expected output format and test expectations
+- Sub-agent has NO memory — if the task says "<5000 bytes" or "exactly 23 characters", you MUST include that in the sub-task description
+DO NOT summarize or simplify constraints — copy them VERBATIM from the task instruction.
 
 ### Step 5: Verify (1 sub-task)
 run_sub_task: "Verify: run tests, check output files exist and have correct format."
@@ -924,10 +919,12 @@ Working directory: %s
 %s
 
 ## CRITICAL RULES
-1. WRITE OUTPUT FILES IMMEDIATELY when you have a solution. Don't verify first — write first, verify after.
-2. A partial working solution saved to disk beats a perfect solution still in your head when time runs out.
-3. Start coding within first 2 tool calls. Don't over-analyze.
-4. You have max 300 seconds — be efficient.
+1. FIRST: read exploration_report.txt if it exists — it contains full project analysis from the research phase.
+2. WRITE OUTPUT FILES IMMEDIATELY when you have a solution. Write first, verify after.
+3. A partial solution on disk beats a perfect solution in your head when time runs out.
+4. For RESEARCH tasks: use repo_map first (shows all functions/classes), read tests FIRST, use structured output.
+5. For CODING tasks: start coding within first 2 tool calls. Don't over-analyze.
+6. You have max 300 seconds — be efficient.
 
 ## Tool Tips
 - bash: State persists. Default timeout 120s.
@@ -938,15 +935,25 @@ Working directory: %s
 - grep: For text files. Returns file:line format.
 
 ## When done
-Summarize: what files you created/modified and key results.`, cwd, taskDesc)
+- If this is a RESEARCH/EXPLORATION task: save your full report to /tmp/exploration_report.txt
+- Summarize: what files you created/modified and key results.`, cwd, taskDesc)
 }
 
 func makeSubTaskTool(cfg agentConfig, startTime time.Time) func(any) (string, error) {
+	subTaskCount := 0
+	maxSubTasks := 7 // 1 explore + 1-2 implement + 1 setup + 1 test + 1 verify + 1 fix
 	return func(input any) (string, error) {
 		taskDesc := getStr(input, "task")
 		if taskDesc == "" {
 			return "", fmt.Errorf("task description is required")
 		}
+		subTaskCount++
+		if subTaskCount > maxSubTasks {
+			log.Printf("[sub-task] BLOCKED: limit %d reached (called %d times)\n", maxSubTasks, subTaskCount)
+			return fmt.Sprintf("SUB-TASK LIMIT REACHED (%d/%d). You have used all your sub-tasks. If the task is done, stop. If not, the solution you have is your best attempt.", subTaskCount, maxSubTasks), nil
+		}
+
+		log.Printf("[sub-task] #%d/%d starting\n", subTaskCount, maxSubTasks)
 
 		timeoutSec := 300
 		if ts, ok := getFloat(input, "timeout_sec"); ok && ts > 0 {
@@ -994,6 +1001,15 @@ func makeSubTaskTool(cfg agentConfig, startTime time.Time) func(any) (string, er
 			NoRepoMap: cfg.NoRepoMap,
 			NoTodo:    false, // workers always get todo
 		})
+
+		// Add tracer to worker so we can extract tool results for context passing
+		workerTraceFile := filepath.Join(os.TempDir(), "wove-trace-"+subChatId+".jsonl")
+		workerTracer := newToolTracer(workerTraceFile)
+		if workerTracer != nil {
+			for i := range workerTools {
+				workerTools[i].ToolTextCallback = wrapTool(workerTracer, workerTools[i].Name, workerTools[i].ToolTextCallback)
+			}
+		}
 
 		// API config
 		opts := &uctypes.AIOptsType{
@@ -1070,25 +1086,52 @@ func makeSubTaskTool(cfg agentConfig, startTime time.Time) func(any) (string, er
 			}
 		}
 
-		// Also capture SSE recorder output for summary
-		recOutput := recorder.Body.String()
-		if len(recOutput) > 100 {
-			// Extract text deltas from SSE for summary
-			var lastText string
-			for _, line := range strings.Split(recOutput, "\n") {
-				if strings.Contains(line, "text-delta") || strings.Contains(line, "text_delta") {
-					lastText = line
+		// Close worker tracer to flush before reading
+		if workerTracer != nil {
+			workerTracer.close()
+		}
+
+		// Extract tool results from worker's trace file for rich context
+		// Worker trace has all bash output, file reads etc. — the real data.
+		if data, err := os.ReadFile(workerTraceFile); err == nil && len(data) > 0 {
+			var toolOutputs []string
+			for _, line := range strings.Split(string(data), "\n") {
+				if line == "" {
+					continue
+				}
+				var entry map[string]any
+				if json.Unmarshal([]byte(line), &entry) == nil {
+					toolResult, _ := entry["result"].(string)
+					if len(toolResult) > 20 { // skip tiny results
+						toolOutputs = append(toolOutputs, toolResult)
+					}
 				}
 			}
-			if lastText != "" && len(lastText) > len(result) {
-				result = lastText
+			if len(toolOutputs) > 0 {
+				fullResult := strings.Join(toolOutputs, "\n---\n")
+				if len(fullResult) > len(result) {
+					result = fullResult
+				}
 			}
+			_ = os.Remove(workerTraceFile) // cleanup
 		}
 
 		// Truncate for orchestrator context
 		if len(result) > 3000 {
 			result = result[:3000] + "\n... [truncated]"
 		}
+
+		// After first sub-task (exploration), save report to file + nudge
+		if subTaskCount == 1 {
+			// Programmatically save exploration result to shared file
+			_ = os.WriteFile(filepath.Join(cfg.CWD, "exploration_report.txt"), []byte(result), 0644)
+			log.Printf("[sub-task] saved exploration report to %s/exploration_report.txt (%d bytes)\n", cfg.CWD, len(result))
+			result += "\n\n--- EXPLORATION COMPLETE. Report saved to exploration_report.txt. Your next steps MUST be: 1) todo_write to plan 2) run_sub_task to IMPLEMENT code. Do NOT explore again. ---"
+		}
+		// No keyword-based blocker — limit of 7 sub-tasks + nudge after #1 is sufficient.
+		// Previous keyword blocker was too aggressive (blocked "read exploration_report" and legit tasks).
+		// Remind remaining budget
+		result += fmt.Sprintf("\n[Sub-tasks used: %d/%d]", subTaskCount, maxSubTasks)
 
 		return result, nil
 	}
@@ -1161,6 +1204,7 @@ Start at Level 1. Only go to Level 2 if it fails. Only go to Level 3 if Level 2 
 - grep: For TEXT files only. For BINARY files (disk images, .dat, .bin >1MB): use bash with 'grep -aob PATTERN file' for byte offset, then 'dd if=file bs=1 skip=OFFSET count=LEN'. NEVER 'strings file | grep' or 'hexdump | grep' on large binaries — they timeout.
 - web_search: Use for docs/APIs you don't know. Don't search after 10 minutes.
 - todo_write: Track your plan. Update after each step.
+- run_sub_task: Delegate heavy work to a worker with clean context. Use when your context is getting large or for independent sub-problems.
 
 Use tools in parallel when independent. Prefer edit_file over full rewrites.
 - Example: repo_map("/app") → see all functions/classes, then read just the relevant ones.
