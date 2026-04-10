@@ -70,7 +70,8 @@ func createTerminalWidget(tabId string, owned *uctypes.OwnedWidgetSet) (string, 
 		TabId: tabId,
 		BlockDef: &waveobj.BlockDef{
 			Meta: map[string]any{
-				waveobj.MetaKey_View: "term",
+				waveobj.MetaKey_View:       "term",
+				waveobj.MetaKey_Controller: "shell",
 			},
 		},
 		Focused: false,
