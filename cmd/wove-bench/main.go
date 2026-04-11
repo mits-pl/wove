@@ -147,6 +147,15 @@ type enforcementState struct {
 	// nudge to break confirmation bias.
 	testFailureEvents int
 	lastFailureNudge  int
+
+	// Doom-loop recovery: hard-stop pattern for when the model is stuck
+	// repeating itself. After N doom-loop events we git checkout + git clean
+	// the workdir and inject a "RESET — try a completely different approach"
+	// message into the next tool result. Counts how many recoveries we've done
+	// so we don't fire too many.
+	doomLoopAck      int // doom events we've already acted on
+	recoveriesFired  int
+	maxRecoveries    int
 }
 
 // testFailurePattern matches common signals of a real test/build failure in
@@ -173,6 +182,68 @@ func (es *enforcementState) markWrote() {
 	es.mu.Lock()
 	defer es.mu.Unlock()
 	es.wroteAny = true
+}
+
+// nudgeIfDoomLoop checks the doom-loop detector for new events and, after the
+// 2nd cumulative event, performs a HARD recovery: git checkout + git clean -fd
+// (preserves the initial commit, removes any untracked files the agent created),
+// then prepends a stern "RESET — try a completely different approach" message
+// to the next tool result. The model sees the reset signal and is forced out
+// of its repetition loop.
+//
+// Rate-limited so we recover at most maxRecoveries times per task.
+func (es *enforcementState) nudgeIfDoomLoop(doom *doomLoopDetector) string {
+	doom.mu.Lock()
+	currentDoom := doom.detected
+	doom.mu.Unlock()
+
+	es.mu.Lock()
+	if currentDoom <= es.doomLoopAck {
+		es.mu.Unlock()
+		return ""
+	}
+	es.doomLoopAck = currentDoom
+	// Fire recovery on the 2nd cumulative doom event (or higher).
+	if currentDoom < 2 {
+		es.mu.Unlock()
+		return ""
+	}
+	if es.recoveriesFired >= es.maxRecoveries {
+		es.mu.Unlock()
+		log.Printf("[recovery] max recoveries (%d) reached, NOT firing again — agent stuck\n", es.maxRecoveries)
+		return ""
+	}
+	es.recoveriesFired++
+	recoveryNum := es.recoveriesFired
+	cwd := es.cwd
+	es.mu.Unlock()
+
+	// Hard reset: git checkout . + git clean -fd
+	// (preserves the "initial-state" commit but removes ALL untracked files)
+	log.Printf("[recovery] DOOM LOOP RECOVERY #%d: running git checkout + git clean -fd in %s\n", recoveryNum, cwd)
+	cmd := exec.Command("bash", "-c", "git checkout . 2>&1; git clean -fd 2>&1")
+	cmd.Dir = cwd
+	output, _ := cmd.CombinedOutput()
+	log.Printf("[recovery] git output: %s\n", strings.TrimSpace(string(output)))
+
+	return fmt.Sprintf(
+		"⚠️ [BENCH-RECOVERY #%d] DOOM LOOP DETECTED — HARD RESET PERFORMED ⚠️\n"+
+			"You repeated the same operation 3+ times consecutively (or AB-pattern). "+
+			"This is a CONFIRMED dead end.\n"+
+			"\n"+
+			"AUTOMATIC ACTIONS:\n"+
+			"  1. git checkout . — all your file edits have been reverted to initial state\n"+
+			"  2. git clean -fd — all untracked files you created have been DELETED\n"+
+			"\n"+
+			"REQUIRED NEXT STEPS:\n"+
+			"  1. Re-read the original task instruction CAREFULLY\n"+
+			"  2. Pick a COMPLETELY DIFFERENT approach (not a variation of what you tried)\n"+
+			"  3. Write your new plan with todo_write FIRST\n"+
+			"  4. Then start fresh with the new strategy\n"+
+			"\n"+
+			"Your previous tool result follows below — IGNORE IT, the files it referenced may no longer exist.\n"+
+			"---\n\n",
+		recoveryNum)
 }
 
 // nudgeIfFailureDismissed scans tool result for test/build failure patterns
@@ -250,9 +321,10 @@ func newEnforcementState(cwd string, startTime time.Time, instruction string) *e
 		log.Printf("[enforce] no explicit output paths found in instruction, falling back to cwd walk\n")
 	}
 	return &enforcementState{
-		cwd:         cwd,
-		startTime:   startTime,
-		outputPaths: paths,
+		cwd:           cwd,
+		startTime:     startTime,
+		outputPaths:   paths,
+		maxRecoveries: 2, // 2 hard recoveries max per task; if it loops a 3rd time, give up
 	}
 }
 
@@ -881,6 +953,13 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 			if failNudge := enforce.nudgeIfFailureDismissed(result); failNudge != "" {
 				log.Printf("[enforce] failure nudge injected at call %d (test failure detected)\n", enforce.toolCallCount)
 				result = failNudge + result
+			}
+			// Doom loop recovery: after the 2nd cumulative doom event (3+ same
+			// tool calls in a row, or AB pattern), perform a hard git reset
+			// and inject a "RESET — try different approach" message.
+			if doomNudge := enforce.nudgeIfDoomLoop(doomDetector); doomNudge != "" {
+				log.Printf("[enforce] DOOM RECOVERY fired at call %d (doom_count=%d)\n", enforce.toolCallCount, doomDetector.detected)
+				result = doomNudge + result
 			}
 			return result, err
 		}

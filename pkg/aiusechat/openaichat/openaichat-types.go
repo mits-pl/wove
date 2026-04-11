@@ -57,29 +57,45 @@ type ChatImageUrl struct {
 }
 
 type ChatRequestMessage struct {
-	Role         string            `json:"role"`                   // "system","user","assistant","tool"
-	Content      string            `json:"-"`                      // plain text (used when ContentParts is nil)
-	ContentParts []ChatContentPart `json:"-"`                      // multimodal parts (used when images present)
-	ToolCalls    []ToolCall        `json:"tool_calls,omitempty"`   // assistant tool-call message
-	ToolCallID   string            `json:"tool_call_id,omitempty"` // for role:"tool"
-	Name         string            `json:"name,omitempty"`         // tool name on role:"tool"
+	Role             string             `json:"role"`                   // "system","user","assistant","tool"
+	Content          string             `json:"-"`                      // plain text (used when ContentParts is nil)
+	ContentParts     []ChatContentPart  `json:"-"`                      // multimodal parts (used when images present)
+	ToolCalls        []ToolCall         `json:"tool_calls,omitempty"`   // assistant tool-call message
+	ToolCallID       string             `json:"tool_call_id,omitempty"` // for role:"tool"
+	Name             string             `json:"name,omitempty"`         // tool name on role:"tool"
+	ReasoningDetails []ReasoningDetail  `json:"reasoning_details,omitempty"` // MiniMax Interleaved Thinking — round-trip reasoning state
+}
+
+// ReasoningDetail represents one reasoning block from MiniMax (or similar) when
+// reasoning_split is enabled. The model returns these in `delta.reasoning_details`
+// in stream chunks; we accumulate them and send back on the next turn so the
+// model has its full chain of thought from previous turns. CRITICAL for
+// Interleaved Thinking to work properly (per Mini-Agent docs).
+type ReasoningDetail struct {
+	Type   string `json:"type,omitempty"`   // "reasoning.text"
+	ID     string `json:"id,omitempty"`     // "reasoning-text-1"
+	Format string `json:"format,omitempty"` // "MiniMax-response-v1"
+	Index  int    `json:"index,omitempty"`
+	Text   string `json:"text"`
 }
 
 // chatRequestMessageJSON is the wire format for ChatRequestMessage
 type chatRequestMessageJSON struct {
-	Role       string          `json:"role"`
-	Content    json.RawMessage `json:"content"`
-	ToolCalls  []ToolCall      `json:"tool_calls,omitempty"`
-	ToolCallID string          `json:"tool_call_id,omitempty"`
-	Name       string          `json:"name,omitempty"`
+	Role             string             `json:"role"`
+	Content          json.RawMessage    `json:"content"`
+	ToolCalls        []ToolCall         `json:"tool_calls,omitempty"`
+	ToolCallID       string             `json:"tool_call_id,omitempty"`
+	Name             string             `json:"name,omitempty"`
+	ReasoningDetails []ReasoningDetail  `json:"reasoning_details,omitempty"`
 }
 
 func (cm ChatRequestMessage) MarshalJSON() ([]byte, error) {
 	raw := chatRequestMessageJSON{
-		Role:       cm.Role,
-		ToolCalls:  cm.ToolCalls,
-		ToolCallID: cm.ToolCallID,
-		Name:       cm.Name,
+		Role:             cm.Role,
+		ToolCalls:        cm.ToolCalls,
+		ToolCallID:       cm.ToolCallID,
+		Name:             cm.Name,
+		ReasoningDetails: cm.ReasoningDetails,
 	}
 	if len(cm.ContentParts) > 0 {
 		b, err := json.Marshal(cm.ContentParts)
@@ -106,6 +122,7 @@ func (cm *ChatRequestMessage) UnmarshalJSON(data []byte) error {
 	cm.ToolCalls = raw.ToolCalls
 	cm.ToolCallID = raw.ToolCallID
 	cm.Name = raw.Name
+	cm.ReasoningDetails = raw.ReasoningDetails
 	cm.Content = ""
 	cm.ContentParts = nil
 	if len(raw.Content) == 0 || bytes.Equal(raw.Content, []byte("null")) {
@@ -201,9 +218,10 @@ type StreamChoice struct {
 
 // This is the important part:
 type ContentDelta struct {
-	Role      string          `json:"role,omitempty"`
-	Content   string          `json:"content,omitempty"`
-	ToolCalls []ToolCallDelta `json:"tool_calls,omitempty"`
+	Role             string             `json:"role,omitempty"`
+	Content          string             `json:"content,omitempty"`
+	ToolCalls        []ToolCallDelta    `json:"tool_calls,omitempty"`
+	ReasoningDetails []ReasoningDetail  `json:"reasoning_details,omitempty"` // MiniMax with reasoning_split=true
 }
 
 type ToolCallDelta struct {

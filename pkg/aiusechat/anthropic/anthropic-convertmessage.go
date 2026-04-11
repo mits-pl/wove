@@ -129,7 +129,13 @@ func buildAnthropicHTTPRequest(ctx context.Context, msgs []anthropicInputMessage
 		Messages:  convertedMsgs,
 	}
 
-	// Add system prompt if provided
+	// Add system prompt if provided.
+	// Apply cache_control: ephemeral on the LAST system block — Anthropic prompt
+	// caching marks a cache breakpoint at the marked block, caching everything
+	// up to and including it. For long stable system prompts (typical of bench
+	// agents) this gives massive token savings on subsequent calls within the
+	// 5-minute cache TTL: input_tokens drops from ~2000 to ~50 on cache hit.
+	// Verified working on MiniMax Anthropic-compat endpoint (test-cache-control.py).
 	if len(chatOpts.SystemPrompt) > 0 {
 		systemBlocks := make([]anthropicMessageContentBlock, len(chatOpts.SystemPrompt))
 		for i, prompt := range chatOpts.SystemPrompt {
@@ -137,6 +143,10 @@ func buildAnthropicHTTPRequest(ctx context.Context, msgs []anthropicInputMessage
 				Type: "text",
 				Text: prompt,
 			}
+		}
+		// Mark the LAST block with cache_control — caches everything up to it.
+		systemBlocks[len(systemBlocks)-1].CacheControl = &anthropicCacheControl{
+			Type: "ephemeral",
 		}
 		reqBody.System = systemBlocks
 	}

@@ -226,8 +226,8 @@ type anthropicWebSearchTool struct {
 }
 
 type anthropicCacheControl struct {
-	Type string `json:"type"` // "ephemeral"
-	TTL  string `json:"ttl"`  // "5m" or "1h"
+	Type string `json:"type"`          // "ephemeral"
+	TTL  string `json:"ttl,omitempty"` // "5m" (default) or "1h"
 }
 
 type anthropicMessageObj struct {
@@ -479,12 +479,10 @@ func RunAnthropicChatStep(
 		return nil, nil, nil, fmt.Errorf("API version mismatch: chat has %s, chatOpts has %s", chat.APIVersion, chatOpts.Config.APIVersion)
 	}
 
-	// Context with timeout if provided.
-	if chatOpts.Config.TimeoutMs > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(chatOpts.Config.TimeoutMs)*time.Millisecond)
-		defer cancel()
-	}
+	// Save parent context for retries — apply per-attempt timeout below so each
+	// retry gets a FRESH deadline. Without this, retries reuse the expired
+	// context and fail instantly after the first deadline hit.
+	parentCtx := ctx
 
 	// Validate continuation if provided
 	if cont != nil {
@@ -511,41 +509,67 @@ func RunAnthropicChatStep(
 		anthropicMsgs = append(anthropicMsgs, inputMsg)
 	}
 
-	req, err := buildAnthropicHTTPRequest(ctx, anthropicMsgs, chatOpts)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
 	httpClient, err := aiutil.MakeHTTPClient(chatOpts.Config.ProxyURL)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
-	// Retry on connection failure or 500 errors
+	// Retry loop with PER-ATTEMPT timeout context. Previously a single ctx
+	// with TimeoutMs was reused across retries, so attempt 2/3 failed instantly
+	// once the first attempt hit the deadline.
 	var resp *http.Response
+	var lastAttemptCancel context.CancelFunc
+
 	for attempt := 0; attempt < 3; attempt++ {
-		resp, err = httpClient.Do(req)
-		if err == nil && resp.StatusCode != http.StatusInternalServerError {
+		if parentCtx.Err() != nil {
+			return nil, nil, nil, fmt.Errorf("parent context cancelled before request: %w", parentCtx.Err())
+		}
+
+		var attemptCtx context.Context
+		var attemptCancel context.CancelFunc
+		if chatOpts.Config.TimeoutMs > 0 {
+			attemptCtx, attemptCancel = context.WithTimeout(parentCtx, time.Duration(chatOpts.Config.TimeoutMs)*time.Millisecond)
+		} else {
+			attemptCtx, attemptCancel = context.WithCancel(parentCtx)
+		}
+
+		req, buildErr := buildAnthropicHTTPRequest(attemptCtx, anthropicMsgs, chatOpts)
+		if buildErr != nil {
+			attemptCancel()
+			return nil, nil, nil, buildErr
+		}
+
+		var attemptErr error
+		resp, attemptErr = httpClient.Do(req)
+		if attemptErr == nil && resp.StatusCode != http.StatusInternalServerError {
+			lastAttemptCancel = attemptCancel
+			err = nil
 			break
 		}
-		if err == nil && resp.StatusCode == http.StatusInternalServerError {
+
+		if attemptErr == nil && resp.StatusCode == http.StatusInternalServerError {
 			resp.Body.Close()
 			log.Printf("[anthropic] server error 500 (attempt %d/3), retrying in %ds\n", attempt+1, (attempt+1)*2)
-		} else if err != nil {
-			log.Printf("[anthropic] request failed (attempt %d/3), retrying in %ds: %v\n", attempt+1, (attempt+1)*2, sanitizeHostnameInError(err))
+			err = fmt.Errorf("server error 500")
+		} else {
+			log.Printf("[anthropic] request failed (attempt %d/3), retrying in %ds: %v\n", attempt+1, (attempt+1)*2, sanitizeHostnameInError(attemptErr))
+			err = attemptErr
 		}
+		attemptCancel()
+
 		if attempt < 2 {
 			time.Sleep(time.Duration((attempt+1)*2) * time.Second)
-			req, err = buildAnthropicHTTPRequest(ctx, anthropicMsgs, chatOpts)
-			if err != nil {
-				return nil, nil, nil, err
-			}
 		}
 	}
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("request failed after 3 retries: %w", sanitizeHostnameInError(err))
 	}
 	defer resp.Body.Close()
+	defer func() {
+		if lastAttemptCancel != nil {
+			lastAttemptCancel()
+		}
+	}()
 
 	// Parse rate limit info from header if present (do this before error check)
 	rateLimitInfo := uctypes.ParseRateLimitHeader(resp.Header.Get("X-Wave-RateLimit"))

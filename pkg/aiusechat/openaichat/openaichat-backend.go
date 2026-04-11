@@ -38,11 +38,11 @@ func RunChatStep(
 		return nil, nil, nil, fmt.Errorf("chat not found: %s", chatOpts.ChatId)
 	}
 
-	if chatOpts.Config.TimeoutMs > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(chatOpts.Config.TimeoutMs)*time.Millisecond)
-		defer cancel()
-	}
+	// Save parent context for retries — we apply per-attempt timeout below so
+	// each retry gets a FRESH deadline. Previously we wrapped ctx with a single
+	// timeout here, then retries reused the already-expired context and failed
+	// instantly.
+	parentCtx := ctx
 
 	// Convert stored messages to chat completions format
 	// Apply context compaction: clear old tool results in API request to save context
@@ -78,45 +78,82 @@ func RunChatStep(
 		messages = append(messages, msg)
 	}
 
-	req, err := buildChatHTTPRequest(ctx, messages, chatOpts)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	// Log request size for debugging
-	if req.Body != nil && req.ContentLength > 0 {
-		log.Printf("[openaichat] request: %d messages, %d tools, body=%dKB\n", len(messages), len(chatOpts.TabTools)+len(chatOpts.Tools)+len(chatOpts.MCPTools), req.ContentLength/1024)
-	}
-
 	client, err := aiutil.MakeHTTPClient(chatOpts.Config.ProxyURL)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	// Retry on connection failure or 500 errors (MiniMax drops connections under load)
+
+	// Retry loop with PER-ATTEMPT timeout context.
+	// - Each attempt gets a fresh ctx with TimeoutMs deadline so a previous
+	//   attempt's expired deadline doesn't kill the retry.
+	// - On parent ctx cancellation we abort immediately (no point retrying).
+	// - On network/500 errors we retry with backoff (MiniMax drops connections).
 	var resp *http.Response
+	var lastAttemptCancel context.CancelFunc
+	defer func() {
+		if lastAttemptCancel != nil {
+			// Note: we can't cancel until response body is fully consumed by
+			// processChatStream below — but defer here covers the success path.
+		}
+	}()
+
 	for attempt := 0; attempt < 3; attempt++ {
-		resp, err = client.Do(req)
-		if err == nil && resp.StatusCode != http.StatusInternalServerError {
+		// Abort if parent (caller) deadline is gone — retries pointless.
+		if parentCtx.Err() != nil {
+			return nil, nil, nil, fmt.Errorf("parent context cancelled before request: %w", parentCtx.Err())
+		}
+
+		// Build a fresh per-attempt context with its own deadline.
+		var attemptCtx context.Context
+		var attemptCancel context.CancelFunc
+		if chatOpts.Config.TimeoutMs > 0 {
+			attemptCtx, attemptCancel = context.WithTimeout(parentCtx, time.Duration(chatOpts.Config.TimeoutMs)*time.Millisecond)
+		} else {
+			attemptCtx, attemptCancel = context.WithCancel(parentCtx)
+		}
+
+		req, err := buildChatHTTPRequest(attemptCtx, messages, chatOpts)
+		if err != nil {
+			attemptCancel()
+			return nil, nil, nil, err
+		}
+		if attempt == 0 && req.Body != nil && req.ContentLength > 0 {
+			log.Printf("[openaichat] request: %d messages, %d tools, body=%dKB\n", len(messages), len(chatOpts.TabTools)+len(chatOpts.Tools)+len(chatOpts.MCPTools), req.ContentLength/1024)
+		}
+
+		var attemptErr error
+		resp, attemptErr = client.Do(req)
+		if attemptErr == nil && resp.StatusCode != http.StatusInternalServerError {
+			// Success — keep the attempt context alive for SSE streaming below.
+			lastAttemptCancel = attemptCancel
+			err = nil
 			break
 		}
-		if err == nil && resp.StatusCode == http.StatusInternalServerError {
+
+		// Failure on this attempt — release and decide whether to retry.
+		if attemptErr == nil && resp.StatusCode == http.StatusInternalServerError {
 			resp.Body.Close()
 			log.Printf("[openaichat] server error 500 (attempt %d/3), retrying in %ds\n", attempt+1, (attempt+1)*2)
-		} else if err != nil {
-			log.Printf("[openaichat] request failed (attempt %d/3), retrying in %ds: %v\n", attempt+1, (attempt+1)*2, err)
+			err = fmt.Errorf("server error 500")
+		} else {
+			log.Printf("[openaichat] request failed (attempt %d/3), retrying in %ds: %v\n", attempt+1, (attempt+1)*2, attemptErr)
+			err = attemptErr
 		}
+		attemptCancel()
+
 		if attempt < 2 {
 			time.Sleep(time.Duration((attempt+1)*2) * time.Second)
-			req, err = buildChatHTTPRequest(ctx, messages, chatOpts)
-			if err != nil {
-				return nil, nil, nil, err
-			}
 		}
 	}
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("request failed after 3 retries: %w", err)
 	}
 	defer resp.Body.Close()
+	defer func() {
+		if lastAttemptCancel != nil {
+			lastAttemptCancel()
+		}
+	}()
 	log.Printf("[openaichat] response status: %d\n", resp.StatusCode)
 
 	if resp.StatusCode != http.StatusOK {
@@ -131,8 +168,9 @@ func RunChatStep(
 		}
 	}
 
-	// Stream processing
-	stopReason, assistantMsg, err := processChatStream(ctx, resp.Body, sseHandler, chatOpts, cont)
+	// Stream processing — use parentCtx so the streaming parser doesn't get
+	// cut off by the per-attempt deadline (we're already past the request phase).
+	stopReason, assistantMsg, err := processChatStream(parentCtx, resp.Body, sseHandler, chatOpts, cont)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -322,9 +360,15 @@ func (p *thinkTagParser) finalize() {
 
 // modelUsesThinkTags returns true for models known to embed reasoning in <think>...</think> tags
 // within the content field (rather than using a dedicated reasoning_content API field).
+//
+// NOTE: MiniMax is intentionally NOT in this list anymore. With reasoning_split=true
+// (which we enable for all minimax models in convertmessage.go), MiniMax returns
+// reasoning in the dedicated `reasoning_details` field, NOT in <think> tags.
+// We parse reasoning_details in processChatStream and pass them back via the
+// ReasoningDetails field on next turn (Mini-Agent compatible).
 func modelUsesThinkTags(model string) bool {
 	m := strings.ToLower(model)
-	thinkTagModels := []string{"deepseek", "qwen", "glm", "yi-", "minimax"}
+	thinkTagModels := []string{"deepseek", "qwen", "glm", "yi-"}
 	for _, prefix := range thinkTagModels {
 		if strings.Contains(m, prefix) {
 			return true
@@ -367,6 +411,22 @@ func processChatStream(
 	var streamUsage *ChatUsage
 
 	parser := newThinkTagParser(sseHandler, textID, reasoningID, modelUsesThinkTags(chatOpts.Config.Model))
+
+	// Accumulator for MiniMax reasoning_details (when reasoning_split=true).
+	// Stream chunks include delta.reasoning_details[]; we accumulate text per
+	// (id, index) so we can replay the full reasoning back to the model on the
+	// next turn. CRITICAL for Interleaved Thinking.
+	type rdAccum struct {
+		key       string // id+index
+		typ       string
+		id        string
+		format    string
+		idx       int
+		text      strings.Builder
+		seenOrder int // first-seen position to preserve order
+	}
+	var rdList []*rdAccum
+	rdByKey := map[string]*rdAccum{}
 
 	if cont == nil {
 		_ = sseHandler.AiMsgStart(msgID)
@@ -435,6 +495,36 @@ func processChatStream(
 		choice := chunk.Choices[0]
 		if choice.Delta.Content != "" {
 			parser.processChunk(choice.Delta.Content)
+		}
+
+		// MiniMax Interleaved Thinking: accumulate reasoning_details deltas.
+		// Each chunk may include incremental text for one or more reasoning blocks.
+		// We also forward the deltas to the SSE handler as "reasoning" events so
+		// the UI can display the chain of thought live.
+		for _, rd := range choice.Delta.ReasoningDetails {
+			key := fmt.Sprintf("%s/%d", rd.ID, rd.Index)
+			acc, ok := rdByKey[key]
+			if !ok {
+				acc = &rdAccum{
+					key:       key,
+					typ:       rd.Type,
+					id:        rd.ID,
+					format:    rd.Format,
+					idx:       rd.Index,
+					seenOrder: len(rdList),
+				}
+				rdByKey[key] = acc
+				rdList = append(rdList, acc)
+			}
+			if rd.Text != "" {
+				acc.text.WriteString(rd.Text)
+				// Stream to SSE as reasoning so the UI sees live thinking.
+				if !parser.reasoningStarted {
+					_ = parser.sseHandler.AiMsgReasoningStart(parser.reasoningID)
+					parser.reasoningStarted = true
+				}
+				_ = parser.sseHandler.AiMsgReasoningDelta(parser.reasoningID, rd.Text)
+			}
 		}
 
 		if len(choice.Delta.ToolCalls) > 0 {
@@ -511,10 +601,30 @@ func processChatStream(
 	// Finalize parser: close any open reasoning/text SSE blocks
 	parser.finalize()
 
+	// Build the final reasoning_details list to send back on the next turn.
+	// MiniMax requires this for Interleaved Thinking — without it, the model
+	// loses its chain of thought between turns.
+	var assistantReasoning []ReasoningDetail
+	if len(rdList) > 0 {
+		// Sort by first-seen order (slice is already in that order).
+		assistantReasoning = make([]ReasoningDetail, 0, len(rdList))
+		for _, acc := range rdList {
+			assistantReasoning = append(assistantReasoning, ReasoningDetail{
+				Type:   acc.typ,
+				ID:     acc.id,
+				Format: acc.format,
+				Index:  acc.idx,
+				Text:   acc.text.String(),
+			})
+		}
+		log.Printf("[openaichat] captured %d reasoning_details block(s) from stream\n", len(assistantReasoning))
+	}
+
 	assistantMsg := &StoredChatMessage{
 		MessageId: msgID,
 		Message: ChatRequestMessage{
-			Role: "assistant",
+			Role:             "assistant",
+			ReasoningDetails: assistantReasoning,
 		},
 		Usage: streamUsage,
 	}
