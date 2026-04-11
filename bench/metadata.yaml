@@ -3,7 +3,7 @@ agent_display_name: "Wove"
 agent_org_display_name: "MITS"
 
 models:
-  - model_name: MiniMax-M2.7-highspeed
+  - model_name: MiniMax-M2.7
     model_provider: minimax
-    model_display_name: "MiniMax M2.7 High Speed"
+    model_display_name: "MiniMax M2.7"
     model_org_display_name: "MiniMax"

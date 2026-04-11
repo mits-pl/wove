@@ -104,6 +104,90 @@ class WoveAgent(BaseAgent):
         result = await environment.exec(f"{WOVE_BENCH_BINARY} --help", timeout_sec=10)
         self.logger.info(f"wove-bench installed, help output: {result.stdout[:100]}")
 
+    async def _preinstall_runtimes(self, instruction: str, environment: BaseEnvironment) -> None:
+        """Pre-install language runtimes hinted at in the task instruction.
+
+        Detects R, Node.js, Rust, Go from common patterns in the task text and
+        installs them via apt before the agent starts. This avoids the agent
+        spending 2-3 minutes inside its turn budget on `apt-get install r-base`
+        and similar setup work that's purely environment configuration.
+
+        Heuristic — false positives just install an extra ~150MB once per task
+        run, which is fine. False negatives mean the agent installs anyway.
+        """
+        instr_lower = instruction.lower()
+
+        # (apt package, list of substring/regex hints in instruction)
+        runtime_hints = [
+            ("r-base", [
+                " in r ", " in r\n", " in r,", " in r.",
+                "r script", "r --version", "r-base", "rscript",
+                "library(", "install.packages",
+                "gilks et al",  # paper used in adaptive-rejection-sampler
+                "sampler implementation",
+            ]),
+            ("nodejs npm", [
+                "node.js", "nodejs", "in javascript", "in js ",
+                "package.json", "npm install", "npm run",
+                "node --version", "node -e",
+            ]),
+            ("rustc cargo", [
+                "in rust", "cargo build", "cargo run", "cargo.toml",
+                "rustc ", "rust toolchain",
+            ]),
+            ("golang", [
+                "in go ", "go build", "go run", "go.mod ",
+                "go test ", "go.sum",
+            ]),
+            ("ruby", [
+                " in ruby", "ruby ", "gemfile", "gem install", "rspec ",
+                "rake ",
+            ]),
+            ("php", [
+                " in php", "php ", "composer install", "composer.json",
+                "phpunit",
+            ]),
+        ]
+
+        to_install = []
+        for pkgs, hints in runtime_hints:
+            if any(h in instr_lower for h in hints):
+                to_install.append(pkgs)
+
+        if not to_install:
+            return
+
+        pkg_list = " ".join(to_install)
+        self.logger.info(f"Pre-installing runtimes detected from task: {pkg_list}")
+
+        # Run apt-get update FIRST so the package index exists, otherwise the
+        # install fails silently. Suppress noisy output (megabytes of "Get:"
+        # lines) but capture rc + last 5 lines for debugging.
+        result = await environment.exec(
+            f"set -e; "
+            f"DEBIAN_FRONTEND=noninteractive apt-get update -qq >/tmp/preinstall.log 2>&1 && "
+            f"DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "
+            f"{pkg_list} >>/tmp/preinstall.log 2>&1; "
+            f"echo \"=== preinstall rc=$? ===\" >> /tmp/preinstall.log; "
+            f"tail -10 /tmp/preinstall.log",
+            user="root",
+            timeout_sec=420,
+        )
+        rc_msg = (result.stdout or "")[-500:]
+        self.logger.info(f"Pre-install result: {rc_msg.strip()}")
+
+        # Verify at least one of the runtimes is now available — log warning if not.
+        for pkg in to_install:
+            cmd_to_check = pkg.split()[0]  # first word; "r-base" → R, "nodejs npm" → nodejs
+            check_map = {"r-base": "R", "nodejs": "node", "rustc": "rustc", "golang": "go", "ruby": "ruby", "php": "php"}
+            cmd = check_map.get(cmd_to_check, cmd_to_check)
+            r = await environment.exec(f"which {cmd} >/dev/null 2>&1 && echo OK || echo MISSING", timeout_sec=5)
+            status = (r.stdout or "").strip()
+            if "OK" in status:
+                self.logger.info(f"Pre-install verified: {cmd} available")
+            else:
+                self.logger.warning(f"Pre-install FAILED for {pkg} ({cmd} not found) — agent will need to install it itself")
+
     async def run(
         self,
         instruction: str,
@@ -137,6 +221,12 @@ class WoveAgent(BaseAgent):
                 f"API key not found. Set {env_key} or WOVE_BENCH_API_KEY env var, "
                 f"or create .env file with {env_key}=xxx"
             )
+
+        # --- Pre-install language runtimes detected from instruction ---
+        # Saves the agent 1-3 minutes of `apt-get install` per task on uncommon
+        # runtimes (R, Node, Rust, Go). Common runtimes (python3, gcc, make) are
+        # already pulled in setup() or pre-baked into the harbor task images.
+        await self._preinstall_runtimes(instruction, environment)
 
         # --- Cross-task error memory: DISABLED ---
         # Hints from failed tasks were contaminating unrelated subsequent tasks.
@@ -172,6 +262,7 @@ class WoveAgent(BaseAgent):
             ("WOVE_NO_WEB", "--no-web"),
             ("WOVE_NO_REPO_MAP", "--no-repo-map"),
             ("WOVE_NO_TODO", "--no-todo"),
+            ("WOVE_NO_LOCAL_CONTEXT", "--no-local-context"),
             ("WOVE_ORCHESTRATOR", "--orchestrator"),
         ]:
             if os.environ.get(env_var):
@@ -285,7 +376,7 @@ class WoveAgent(BaseAgent):
     def _parse_model(self) -> tuple[str, str]:
         """Parse 'provider/model' format."""
         if not self.model_name:
-            return "minimax", "MiniMax-M2.7-highspeed"
+            return "minimax", "MiniMax-M2.7"
         if "/" in self.model_name:
             provider, model = self.model_name.split("/", 1)
             return provider.lower(), model
