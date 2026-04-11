@@ -28,4 +28,9 @@ type ObjRTInfo struct {
 	WaveAIMaxOutputTokens int    `json:"waveai:maxoutputtokens,omitempty"`
 
 	ClaudeState string `json:"claude:state,omitempty"` // "working", "idle" - set by Claude Code hooks
+
+	// Web view console state (pushed from frontend webview on console-message events)
+	WebConsoleErrorCount int      `json:"web:consoleerrorcount,omitempty"`
+	WebConsoleWarnCount  int      `json:"web:consolewarncount,omitempty"`
+	WebConsoleRecent     []string `json:"web:consolerecent,omitempty"` // last few error/warning messages (truncated)
 }

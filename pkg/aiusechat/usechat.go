@@ -730,8 +730,12 @@ func ResolveToolCall(toolDef *uctypes.ToolDefinition, toolCall uctypes.WaveToolC
 		} else {
 			result.Text = text
 			result.ImageUrl = imageUrl
-			if toolDef.ToolCallDesc != nil && toolCall.ToolUseData != nil {
-				toolCall.ToolUseData.ToolDesc = toolDef.ToolCallDesc(toolCall.Input, text, toolCall.ToolUseData)
+			if toolCall.ToolUseData != nil {
+				// Expose the image to the chat UI so it renders in history alongside the tool call
+				toolCall.ToolUseData.ImageUrl = imageUrl
+				if toolDef.ToolCallDesc != nil {
+					toolCall.ToolUseData.ToolDesc = toolDef.ToolCallDesc(toolCall.Input, text, toolCall.ToolUseData)
+				}
 			}
 		}
 	} else if toolDef.ToolAnyCallback != nil {

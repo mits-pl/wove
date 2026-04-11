@@ -90,6 +90,26 @@ func setFieldValue(fieldValue reflect.Value, value any) {
 		return
 	}
 
+	if fieldValue.Kind() == reflect.Slice {
+		if fieldValue.Type().Elem().Kind() == reflect.String {
+			if inputSlice, ok := value.([]any); ok {
+				outputSlice := make([]string, 0, len(inputSlice))
+				for _, v := range inputSlice {
+					if strVal, ok := v.(string); ok {
+						outputSlice = append(outputSlice, strVal)
+					}
+				}
+				fieldValue.Set(reflect.ValueOf(outputSlice))
+				return
+			}
+			if inputSlice, ok := value.([]string); ok {
+				fieldValue.Set(reflect.ValueOf(inputSlice))
+				return
+			}
+		}
+		return
+	}
+
 	if fieldValue.Kind() == reflect.Map {
 		if fieldValue.Type().Key().Kind() == reflect.String && fieldValue.Type().Elem().Kind() == reflect.Float64 {
 			if inputMap, ok := value.(map[string]any); ok {

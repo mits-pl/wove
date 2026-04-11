@@ -104,13 +104,36 @@ func MakeBlockShortDesc(block *waveobj.Block) string {
 	case "web":
 		url, _ := block.Meta["url"].(string)
 		title, _ := block.Meta["web:title"].(string)
+		var base string
 		if url != "" && title != "" {
-			return fmt.Sprintf("web browser: %q (%s)", title, url)
+			base = fmt.Sprintf("web browser: %q (%s)", title, url)
+		} else if url != "" {
+			base = fmt.Sprintf("web browser: %s", url)
+		} else {
+			base = "web browser widget"
 		}
-		if url != "" {
-			return fmt.Sprintf("web browser: %s", url)
+		// Append console error/warn summary if anything was captured since last reload
+		blockORef := waveobj.MakeORef(waveobj.OType_Block, block.OID)
+		if rtInfo := wstore.GetRTInfo(blockORef); rtInfo != nil {
+			if rtInfo.WebConsoleErrorCount > 0 || rtInfo.WebConsoleWarnCount > 0 {
+				var sb strings.Builder
+				sb.WriteString(base)
+				sb.WriteString(fmt.Sprintf(" [console: %d errors, %d warnings]",
+					rtInfo.WebConsoleErrorCount, rtInfo.WebConsoleWarnCount))
+				if len(rtInfo.WebConsoleRecent) > 0 {
+					sb.WriteString("\n  recent console messages:")
+					for _, msg := range rtInfo.WebConsoleRecent {
+						if len(msg) > 200 {
+							msg = msg[:200] + "…"
+						}
+						sb.WriteString("\n  - ")
+						sb.WriteString(msg)
+					}
+				}
+				return sb.String()
+			}
 		}
-		return "web browser widget"
+		return base
 	case "waveai":
 		return "AI chat widget"
 	case "cpuplot":
@@ -204,7 +227,7 @@ func GenerateTabStateAndTools(ctx context.Context, tabid string, widgetAccess bo
 		tools = append(tools, GetTermRunCommandToolDefinition(tabid, chatOpts.OwnedWidgets))
 		tools = append(tools, GetTermSendInputToolDefinition(tabid))
 		if viewTypes["web"] {
-			tools = append(tools, GetWebCaptureToolDefinition(tabid))
+			tools = append(tools, GetWebCaptureToolDefinition(tabid, chatOpts.Config.Capabilities))
 			tools = append(tools, GetWebNavigateToolDefinition(tabid))
 			tools = append(tools, GetWebReadTextToolDefinition(tabid))
 			tools = append(tools, GetWebReadHTMLToolDefinition(tabid))

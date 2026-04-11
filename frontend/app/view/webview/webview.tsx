@@ -6,6 +6,7 @@ import { Search, useSearch } from "@/app/element/search";
 import { globalStore } from "@/app/store/jotaiStore";
 import { getSimpleControlShiftAtom } from "@/app/store/keymodel";
 import type { TabModel } from "@/app/store/tab-model";
+import { RpcApi } from "@/app/store/wshclientapi";
 import { makeORef } from "@/app/store/wos";
 import { TabRpcClient } from "@/app/store/wshrpcutil";
 import {
@@ -1403,10 +1404,49 @@ const WebView = memo(({ model, onFailLoad, blockRef, initialSrc }: WebViewProps)
         if (!webview) {
             return;
         }
+        // Console error/warn counters pushed to backend RTInfo so the AI agent sees
+        // them in widget context (tab state prompt) without needing a tool call.
+        let consoleErrorCount = 0;
+        let consoleWarnCount = 0;
+        let consoleRecent: string[] = []; // last few error/warning messages (truncated)
+        let pushTimer: ReturnType<typeof setTimeout> | null = null;
+
+        const flushConsoleStateToRTInfo = () => {
+            pushTimer = null;
+            const recentCopy = consoleRecent.slice();
+            RpcApi.SetRTInfoCommand(TabRpcClient, {
+                oref: makeORef("block", model.blockId),
+                data: {
+                    "web:consoleerrorcount": consoleErrorCount,
+                    "web:consolewarncount": consoleWarnCount,
+                    "web:consolerecent": recentCopy.length > 0 ? recentCopy : null,
+                } as any,
+            }).catch(() => {});
+        };
+        const scheduleConsolePush = () => {
+            if (pushTimer != null) return;
+            pushTimer = setTimeout(flushConsoleStateToRTInfo, 500);
+        };
+        const resetConsoleState = (immediate: boolean) => {
+            consoleErrorCount = 0;
+            consoleWarnCount = 0;
+            consoleRecent = [];
+            if (pushTimer != null) {
+                clearTimeout(pushTimer);
+                pushTimer = null;
+            }
+            if (immediate) {
+                flushConsoleStateToRTInfo();
+            }
+        };
+
         const navigateListener = (e: any) => {
             setErrorText("");
             if (e.isMainFrame) {
                 model.handleNavigate(e.url);
+                // New page — clear stale console state on backend so the agent doesn't
+                // see errors from the previous URL.
+                resetConsoleState(true);
             }
         };
         const newWindowHandler = (e: any) => {
@@ -1477,15 +1517,30 @@ const WebView = memo(({ model, onFailLoad, blockRef, initialSrc }: WebViewProps)
         // Capture console messages
         const consoleMessageHandler = (e: any) => {
             const levelMap: Record<number, string> = { 0: "log", 1: "warn", 2: "error" };
+            const level = levelMap[e.level] || "log";
+            const message = e.message || "";
             const entry: ConsoleLogEntry = {
-                level: levelMap[e.level] || "log",
-                message: e.message || "",
+                level,
+                message,
                 timestamp: Date.now(),
             };
             const current = globalStore.get(model.consoleLogs);
             // Keep last 500 entries
             const updated = current.length >= 500 ? [...current.slice(-499), entry] : [...current, entry];
             globalStore.set(model.consoleLogs, updated);
+
+            // Track errors/warnings for AI widget context
+            if (level === "error" || level === "warn") {
+                if (level === "error") consoleErrorCount++;
+                else consoleWarnCount++;
+                // Keep last 5 error/warn messages, truncated to 300 chars each
+                const truncated = message.length > 300 ? message.slice(0, 300) + "…" : message;
+                consoleRecent.push(`[${level}] ${truncated}`);
+                if (consoleRecent.length > 5) {
+                    consoleRecent = consoleRecent.slice(-5);
+                }
+                scheduleConsolePush();
+            }
         };
         webview.addEventListener("console-message", consoleMessageHandler);
 
@@ -1516,6 +1571,10 @@ const WebView = memo(({ model, onFailLoad, blockRef, initialSrc }: WebViewProps)
             webview.removeEventListener("media-paused", handleMediaPaused);
             webview.removeEventListener("found-in-page", onFoundInPage);
             webview.removeEventListener("console-message", consoleMessageHandler);
+            if (pushTimer != null) {
+                clearTimeout(pushTimer);
+                pushTimer = null;
+            }
         };
     }, []);
 

@@ -24,6 +24,7 @@
             "openrouter",
             "nanogpt",
             "openai",
+            "xai",
             "azure",
             "azure-legacy",
             "custom"

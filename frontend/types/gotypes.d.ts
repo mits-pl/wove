@@ -1250,6 +1250,9 @@ declare global {
         "waveai:mode"?: string;
         "waveai:maxoutputtokens"?: number;
         "claude:state"?: string;
+        "web:consoleerrorcount"?: number;
+        "web:consolewarncount"?: number;
+        "web:consolerecent"?: string[];
     };
 
     // wshrpc.PathCommandData
