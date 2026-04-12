@@ -128,51 +128,95 @@ class WoveAgent(BaseAgent):
         if not api_key:
             return ""
 
-        # Extract search query: strip file paths, boilerplate, keep technical terms
-        query = re.sub(r'/[a-zA-Z0-9_./\-]+', '', instruction)
-        for prefix in ["Your task is to ", "You are given ", "There's a ", "There is a "]:
-            idx = query.find(prefix)
-            if 0 <= idx < 80:
-                query = query[idx + len(prefix):]
-                break
-        lines = [ln.strip() for ln in query.split('\n')
-                 if ln.strip() and not ln.strip().startswith('-')
-                 and not ln.strip().startswith('Usage:')
-                 and not ln.strip().startswith('Requirements:')]
-        query = ' '.join(lines[:3])[:150].strip()
-        if len(query) < 15:
-            return ""
-        if not query.lower().startswith("how"):
-            query = "how to " + query
+        # Ask LLM to generate search queries. max_tokens must be large enough
+        # for MiniMax thinking + text response (~1000 covers thinking overhead).
+        instr_snippet = instruction[:500]
 
-        self.logger.info(f"Web research query: {query[:80]}")
+        # Extract file names, extensions, and technical terms for richer context
+        files = re.findall(r'/[a-zA-Z0-9_./\-]+\.[a-zA-Z0-9]+', instruction)
+        file_names = [f.split('/')[-1] for f in files]
+        extensions = list(set(f.split('.')[-1] for f in file_names))
+        context_line = ""
+        if file_names:
+            context_line = f"\nFiles: {', '.join(file_names)}. Extensions: {', '.join(extensions)}."
 
-        # MiniMax Token Plan search API
-        try:
-            payload = json.dumps({"q": query}).encode("utf-8")
-            req = urllib.request.Request(
-                "https://api.minimax.io/v1/coding_plan/search",
-                data=payload,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                    "MM-API-Source": "Minimax-MCP",
-                },
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-        except Exception as e:
-            self.logger.warning(f"MiniMax search failed: {e}")
-            return ""
+        queries = []
+        endpoint = os.environ.get("WOVE_MINIMAX_ENDPOINT", "https://api.minimax.io/anthropic/v1/messages")
+        for attempt in range(2):
+            try:
+                qr = json.dumps({
+                    "model": "MiniMax-M2.7",
+                    "max_tokens": 2000,
+                    "system": "You are a Google search query generator for a coding benchmark. Output 2 search queries that find reference code or documentation. Format: one query per line, plain text, no code, no backticks, no numbering. Focus on algorithms, parser behavior, data formats, and implementation patterns.",
+                    "messages": [{"role": "user", "content": f"Find reference material for: {instr_snippet}{context_line}"}],
+                }).encode()
+                req = urllib.request.Request(
+                    endpoint, data=qr,
+                    headers={
+                        "x-api-key": api_key,
+                        "Content-Type": "application/json",
+                        "anthropic-version": "2023-06-01",
+                    },
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    qdata = json.loads(resp.read().decode())
+                for block in qdata.get("content", []):
+                    if block.get("type") == "text":
+                        for line in block["text"].strip().split("\n"):
+                            line = line.strip().strip("0123456789.-) ")
+                            if len(line) > 10:
+                                queries.append(line)
+                if queries:
+                    self.logger.info(f"LLM generated {len(queries)} search queries (attempt {attempt+1}): {queries}")
+                    break
+                self.logger.warning(f"LLM query attempt {attempt+1}: no queries in text, retrying")
+            except Exception as e:
+                self.logger.warning(f"LLM query attempt {attempt+1} failed: {e}")
+                if attempt == 0:
+                    continue
 
-        results = data.get("organic", [])
-        if not results:
+        if not queries:
+            # Fallback: first sentence stripped of paths
+            import re as _re
+            q = _re.sub(r'/[a-zA-Z0-9_./\-]+', '', instruction)[:150].strip()
+            if len(q) > 15:
+                queries = ["how to " + q]
+            else:
+                return ""
+
+        # Search with each query via MiniMax Token Plan search API
+        all_results = []
+        seen_urls = set()
+        for query in queries[:3]:
+            try:
+                payload = json.dumps({"q": query}).encode("utf-8")
+                req = urllib.request.Request(
+                    "https://api.minimax.io/v1/coding_plan/search",
+                    data=payload,
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                        "MM-API-Source": "Minimax-MCP",
+                    },
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                for r in data.get("organic", []):
+                    link = r.get("link", "")
+                    if link and link not in seen_urls:
+                        seen_urls.add(link)
+                        all_results.append(r)
+            except Exception as e:
+                self.logger.warning(f"MiniMax search failed for '{query[:50]}': {e}")
+
+        if not all_results:
             return ""
 
         # Build context: titles + URLs + snippets
         parts = []
-        for r in results[:7]:
+        for r in all_results[:10]:
             title = r.get("title", "")
             link = r.get("link", "")
             snippet = r.get("snippet", "")
@@ -186,7 +230,7 @@ class WoveAgent(BaseAgent):
         if not parts:
             return ""
 
-        ctx = "\n\n<web_research_context>\nSearch results for: " + query + "\n\n"
+        ctx = "\n\n<web_research_context>\nSearch queries: " + " | ".join(queries) + "\n\n"
         ctx += "\n".join(parts)
         ctx += "\n</web_research_context>\n\nThe above shows web research relevant to your task. Use these references, techniques, and URLs to solve the task faster. You can web_fetch any URL above for full content, or web_search for more."
 
@@ -365,7 +409,8 @@ class WoveAgent(BaseAgent):
                 self.logger.info(f"Injected {len(web_research)} bytes of web research context")
 
         # Build command
-        full_instruction = instruction + error_hints + web_research
+        full_instruction = instruction + error_hints
+        # web_research goes via env var → system prompt (context, not instruction)
         cmd_parts = [
             WOVE_BENCH_BINARY,
             "--model", shlex.quote(model_name),
@@ -403,7 +448,10 @@ class WoveAgent(BaseAgent):
             result = await environment.exec(
                 cmd,
                 timeout_sec=900,
-                env={"WOVE_BENCH_API_KEY": api_key},
+                env={
+                    "WOVE_BENCH_API_KEY": api_key,
+                    **({"WOVE_WEB_CONTEXT": web_research} if web_research else {}),
+                },
             )
         except BaseException as e:
             # BaseException catches asyncio.CancelledError (harbor timeout) + regular exceptions

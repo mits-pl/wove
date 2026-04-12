@@ -491,10 +491,23 @@ func (es *enforcementState) heuristicAdvisor() string {
 		}
 	}
 
-	// Don't fire during observation phase or within 8-call cooldown
-	minCall := es.advisorMinCall
+	// Cooldown: 8 calls between soft heuristics
 	lastH := es.lastHeuristicAt
-	if calls < minCall || calls-lastH < 8 {
+	if calls-lastH < 8 {
+		return ""
+	}
+
+	// Spiral is CRITICAL — bypasses observation phase minCall
+	if es.consecutiveFails >= 3 {
+		es.lastHeuristicAt = calls
+		return fmt.Sprintf("[CRITICAL] %d consecutive test failures. Your current approach is NOT working. "+
+			"STOP iterating the same code. You MUST try a fundamentally different algorithm or strategy. "+
+			"Consider: web_search for a working reference implementation, or try a completely different compression/encoding method.\n", es.consecutiveFails)
+	}
+
+	// Soft heuristics: respect observation phase
+	minCall := es.advisorMinCall
+	if calls < minCall {
 		return ""
 	}
 
@@ -752,19 +765,23 @@ func (es *enforcementState) nudgeFromAdvisor() string {
 	apiKey := es.advisorAPIKey
 	es.mu.Unlock()
 
-	// Consume pending advice — but only after observation phase (minCall).
-	// Before minCall, advisor runs in background (fetches docs, builds plan)
-	// but holds advice silently. Agent works undisturbed.
-	if pending != "" && callCount >= minCall {
-		es.mu.Lock()
-		es.pendingAdvice = ""
-		injectFn := es.injectUserMsg
-		es.mu.Unlock()
-		if injectFn != nil {
-			injectFn(pending)
-			log.Printf("[advisor] injected user message from async advice (call %d, past minCall %d)\n", callCount, minCall)
+	// Consume pending advice. Critical advice (REDIRECT with fetched docs,
+	// or test failure diagnosis) delivers immediately — no observation phase
+	// delay. Soft "OK" advice is discarded.
+	if pending != "" {
+		// During observation phase, only deliver if it's a REDIRECT (not OK)
+		isCritical := !strings.Contains(strings.ToUpper(pending), "OK") && len(pending) > 50
+		if callCount >= minCall || isCritical {
+			es.mu.Lock()
+			es.pendingAdvice = ""
+			injectFn := es.injectUserMsg
+			es.mu.Unlock()
+			if injectFn != nil {
+				injectFn(pending)
+				log.Printf("[advisor] injected user message (call %d, critical=%v)\n", callCount, isCritical)
+			}
+			return ""
 		}
-		return ""
 	}
 
 	// Kick off async advisor — start EARLY (even before minCall) to fetch
@@ -921,8 +938,8 @@ func (es *enforcementState) runAdvisorAsync(callCount int, recent, events []stri
 	if fetchedContent != "" {
 		// "Senior dev who read the docs" mode — give concrete steps
 		advisorPrompt = fmt.Sprintf(
-			"You are a senior developer helping a junior coding agent.\n"+
-				"TASK:\n%s\n\n"+
+			"You are a senior developer helping a junior developer with a coding benchmark challenge.\n"+
+				"Challenge description:\n%s\n\n"+
 				"Agent's last actions:\n%s\n"+
 				"%s\n%s\n"+
 				"Elapsed: %ds. REMAINING: %ds.\n\n"+
@@ -940,9 +957,9 @@ func (es *enforcementState) runAdvisorAsync(callCount int, recent, events []stri
 	} else {
 		// Monitor mode — no fetched content, just check trajectory
 		advisorPrompt = fmt.Sprintf(
-			"You monitor an AI coding agent. Terminal-Bench 2.0, 900s limit.\n"+
+			"You monitor a developer solving a coding benchmark challenge. 900s limit.\n"+
 				"Elapsed: %ds. REMAINING: %ds. Calls: %d.\n\n"+
-				"TASK:\n%s\n\n"+
+				"Challenge:\n%s\n\n"+
 				"Actions:\n%s\n"+
 				"%s\n%s\n%s\n"+
 				"Respond with EXACTLY ONE LINE:\n"+
@@ -1378,15 +1395,11 @@ func main() {
 			sb.WriteString(tc)
 			sb.WriteString("\n</test_files_content>\n\nThe above shows the EXACT tests that will verify your solution. Study them carefully before implementing.")
 		}
-		if !noWeb {
-			wc := buildWebResearchContext(instruction)
-			if wc != "" {
-				sb.WriteString("\n\n<web_research_context>\n")
-				sb.WriteString(wc)
-				sb.WriteString("\n</web_research_context>\n\nThe above shows web research results relevant to your task.")
-			}
-		}
 		fmt.Println(sb.String())
+		if webCtx := os.Getenv("WOVE_WEB_CONTEXT"); webCtx != "" {
+			fmt.Println("\n=== SYSTEM PROMPT (web research) ===")
+			fmt.Println(webCtx)
+		}
 		fmt.Println()
 		fmt.Printf("=== STATS: instruction=%d local_context=%d test_content=%d total=%d bytes ===\n",
 			len(instruction), len(buildLocalContext(cwd)), len(readTestFiles(cwd)), sb.Len())
@@ -1611,6 +1624,13 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 		if data, err := os.ReadFile(cfg.SystemFile); err == nil {
 			systemPrompts = append(systemPrompts, string(data))
 		}
+	}
+
+	// Web research context — passed via env var from wove_agent.py pre-flight.
+	// Goes into system prompt (context, not instruction). Seen every turn, cached.
+	if webCtx := os.Getenv("WOVE_WEB_CONTEXT"); webCtx != "" {
+		systemPrompts = append(systemPrompts, webCtx)
+		log.Printf("[wove-bench] web research context in system prompt (%d bytes)\n", len(webCtx))
 	}
 
 	opts := &uctypes.AIOptsType{
@@ -1855,51 +1875,139 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 		}
 	}
 
-	// --- Forced verification step ---
-	// After agent finishes, inject a verification turn.
-	// Adapts based on whether /tests/ exists in the container.
-	elapsed := time.Since(startTime)
-	remainingSec := 900 - int(elapsed.Seconds())
-	if aiMetrics != nil && aiMetrics.ToolUseCount > 0 && ctx.Err() == nil && remainingSec > 30 {
-		log.Printf("[wove-bench] injecting forced verification step (%.0fs elapsed, %ds remaining)\n", elapsed.Seconds(), remainingSec)
-		verifyMsg := &uctypes.AIMessage{
-			MessageId: uuid.New().String(),
-			Parts: []uctypes.AIMessagePart{
-				{Type: uctypes.AIMessagePartTypeText, Text: `VERIFICATION REQUIRED — do NOT stop until you complete ALL steps.
-
-Step 1: Re-read your OUTPUT file(s) — cat the actual file content, do NOT rely on memory.
-
-Step 2: Re-read the original task instruction (scroll up). Compare your output with EVERY requirement:
-  - Does the file format match exactly? (CSV columns, JSON keys, exact strings)
-  - Does the content answer the RIGHT question? (not a similar question)
-  - Are all required files present at the correct paths?
-
-Step 3: If tests exist (ls /tests/ 2>/dev/null), run them:
-  bash /tests/test.sh 2>&1 || pytest /tests/ -x 2>&1
-  If tests fail — fix and re-run.
-
-Step 4: If tests do NOT exist, run your own sanity check:
-  - Execute your solution and verify output makes sense
-  - If the task asked for a specific value, double-check your source data
-
-IMPORTANT: If you find ANY mismatch, fix it NOW. An incorrect answer costs the entire reward.`},
-			},
+	// --- Advisor code review loop before verifier ---
+	// Senior dev reviews output, agent fixes, repeat until OK or max 2 rounds.
+	for reviewRound := 0; ; reviewRound++ {
+		elapsed := time.Since(startTime)
+		remainingSec := 900 - int(elapsed.Seconds())
+		if aiMetrics == nil || aiMetrics.ToolUseCount == 0 || ctx.Err() != nil || remainingSec <= 60 {
+			break
 		}
-		convertedVerify, verifyErr := backend.ConvertAIMessageToNativeChatMessage(*verifyMsg)
-		if verifyErr == nil {
-			_ = chatstore.DefaultChatStore.PostMessage(chatOpts.ChatId, &chatOpts.Config, convertedVerify)
-			verifyMetrics, verifyErr := aiusechat.RunAIChat(ctx, sseHandler, backend, chatOpts)
-			if verifyErr != nil {
-				log.Printf("[wove-bench] verification error: %v\n", verifyErr)
+		log.Printf("[advisor-review] round %d (%.0fs elapsed, %ds remaining)\n", reviewRound+1, elapsed.Seconds(), remainingSec)
+
+		// 1. Read output files
+		var outputContent strings.Builder
+		for _, p := range enforce.outputPaths {
+			fullPath := p
+			if !filepath.IsAbs(p) {
+				fullPath = filepath.Join(cfg.CWD, p)
 			}
-			if verifyMetrics != nil {
-				aiMetrics.Usage.InputTokens += verifyMetrics.Usage.InputTokens
-				aiMetrics.Usage.OutputTokens += verifyMetrics.Usage.OutputTokens
-				aiMetrics.ToolUseCount += verifyMetrics.ToolUseCount
-				aiMetrics.RequestCount += verifyMetrics.RequestCount
+			data, err := os.ReadFile(fullPath)
+			if err != nil {
+				outputContent.WriteString(fmt.Sprintf("FILE %s: MISSING (%v)\n", p, err))
+			} else {
+				content := string(data)
+				if len(content) > 2000 {
+					content = content[:2000] + "... [truncated]"
+				}
+				outputContent.WriteString(fmt.Sprintf("FILE %s (%d bytes):\n%s\n\n", p, len(data), content))
 			}
 		}
-	}
+		// Also check for common output files if no explicit paths
+		if len(enforce.outputPaths) == 0 {
+			entries, _ := os.ReadDir(cfg.CWD)
+			for _, e := range entries {
+				if !e.IsDir() {
+					info, _ := e.Info()
+					if info != nil && info.ModTime().After(startTime) && info.Size() > 0 {
+						outputContent.WriteString(fmt.Sprintf("FILE %s (%d bytes, modified during run)\n", e.Name(), info.Size()))
+					}
+				}
+			}
+		}
+
+		instrSnippet := cfg.Instruction
+		if len(instrSnippet) > 500 {
+			instrSnippet = instrSnippet[:500]
+		}
+
+		// 2. Send to MiniMax advisor for review
+		reviewPrompt := fmt.Sprintf(
+			"You are a senior developer doing a FINAL CODE REVIEW before submission.\n\n"+
+				"TASK:\n%s\n\n"+
+				"AGENT'S OUTPUT:\n%s\n\n"+
+				"Review the output against EVERY task requirement. Check:\n"+
+				"- Are all required files present?\n"+
+				"- Does the content match what was asked? (right format, right data, right answer)\n"+
+				"- Any obvious bugs, wrong values, missing pieces?\n\n"+
+				"If CORRECT: respond with just OK\n"+
+				"If WRONG: explain exactly what's wrong and how to fix it (be specific — file names, expected values, exact errors)",
+			instrSnippet, outputContent.String())
+
+		apiKey := enforce.advisorAPIKey
+		advisorEndpoint := enforce.advisorEndpoint
+		if apiKey != "" {
+			reqBody := fmt.Sprintf(`{"model":"MiniMax-M2.7","max_tokens":500,"messages":[{"role":"user","content":"%s"}]}`,
+				strings.ReplaceAll(strings.ReplaceAll(reviewPrompt, `"`, `\"`), "\n", `\n`))
+
+			reviewCtx, reviewCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			req, err := http.NewRequestWithContext(reviewCtx, "POST", advisorEndpoint, strings.NewReader(reqBody))
+			if err == nil {
+				req.Header.Set("x-api-key", apiKey)
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("anthropic-version", "2023-06-01")
+
+				resp, err := http.DefaultClient.Do(req)
+				if err == nil {
+					body, _ := io.ReadAll(resp.Body)
+					resp.Body.Close()
+					var parsed struct {
+						Content []struct {
+							Type string `json:"type"`
+							Text string `json:"text"`
+						} `json:"content"`
+					}
+					if json.Unmarshal(body, &parsed) == nil {
+						review := ""
+						for _, c := range parsed.Content {
+							if c.Type == "text" {
+								review += c.Text
+							}
+						}
+						review = strings.TrimSpace(review)
+
+						if review != "" && !strings.HasPrefix(strings.ToUpper(review), "OK") && len(review) > 10 {
+							// Advisor found issues — save to notes + give agent a chance to fix
+							log.Printf("[advisor-review] ISSUES FOUND: %s\n", review[:min(150, len(review))])
+							notes.record("review_issues", review)
+							fixMsg := &uctypes.AIMessage{
+								MessageId: uuid.New().String(),
+								Parts: []uctypes.AIMessagePart{
+									{Type: uctypes.AIMessagePartTypeText, Text: fmt.Sprintf(
+										"[SENIOR DEV CODE REVIEW — ISSUES FOUND]\n%s\n\n"+
+											"This review has been saved to your notes (key: review_issues). Use recall_notes if you need it later.\n"+
+											"Fix these issues NOW. You have %ds remaining.", review, remainingSec)},
+								},
+							}
+							convertedFix, fixErr := backend.ConvertAIMessageToNativeChatMessage(*fixMsg)
+							if fixErr == nil {
+								_ = chatstore.DefaultChatStore.PostMessage(chatOpts.ChatId, &chatOpts.Config, convertedFix)
+								fixMetrics, fixErr := aiusechat.RunAIChat(ctx, sseHandler, backend, chatOpts)
+								if fixErr != nil {
+									log.Printf("[advisor-review] fix error: %v\n", fixErr)
+								}
+								if fixMetrics != nil {
+									aiMetrics.Usage.InputTokens += fixMetrics.Usage.InputTokens
+									aiMetrics.Usage.OutputTokens += fixMetrics.Usage.OutputTokens
+									aiMetrics.ToolUseCount += fixMetrics.ToolUseCount
+									aiMetrics.RequestCount += fixMetrics.RequestCount
+								}
+							}
+						} else {
+							log.Printf("[advisor-review] APPROVED — output looks correct\n")
+							reviewCancel()
+							break
+						}
+					}
+				} else {
+					log.Printf("[advisor-review] API error: %v\n", err)
+					reviewCancel()
+					break
+				}
+			}
+			reviewCancel()
+		}
+	} // end review loop
 
 	result := BenchMetrics{
 		DurationMs: int(time.Since(startTime).Milliseconds()),
