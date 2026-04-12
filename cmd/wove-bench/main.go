@@ -140,6 +140,7 @@ type enforcementState struct {
 	mu             sync.Mutex
 	cwd            string
 	startTime      time.Time
+	instruction    string   // original task instruction (for advisor context)
 	outputPaths    []string // explicit paths mentioned in the task instruction
 	toolCallCount  int
 	lastNudgeCount int
@@ -159,6 +160,30 @@ type enforcementState struct {
 	doomLoopAck      int // doom events we've already acted on
 	recoveriesFired  int
 	maxRecoveries    int
+
+	// LLM Advisor: async secondary MiniMax call that monitors the agent's
+	// trace and injects strategic suggestions. Runs in a goroutine so it
+	// doesn't block tool call delivery.
+	advisorAPIKey    string
+	advisorEndpoint  string
+	lastAdvisorCall  int
+	advisorInterval  int
+	advisorMinCall   int  // don't inject before this call (observation phase)
+	advisorRunning   bool
+	pendingAdvice    string
+	recentToolCalls  []string
+	keyEvents        []string
+
+	// User message injection
+	injectUserMsg    func(string)
+
+	// Track if web research was already done (by agent or advisor)
+	webResearchDone  bool
+	lastHeuristicAt  int // cooldown: don't fire heuristic within N calls of last one
+
+	// Consecutive test failure tracker — detects "agent rewrites code but
+	// tests keep failing" spiral. Reset on any test success.
+	consecutiveFails int
 }
 
 // testFailurePattern matches common signals of a real test/build failure in
@@ -323,11 +348,24 @@ func newEnforcementState(cwd string, startTime time.Time, instruction string) *e
 	} else {
 		log.Printf("[enforce] no explicit output paths found in instruction, falling back to cwd walk\n")
 	}
+	apiKey := os.Getenv("WOVE_BENCH_API_KEY")
+	if apiKey == "" {
+		apiKey = os.Getenv("MINIMAX_API_KEY")
+	}
+	endpoint := os.Getenv("WOVE_MINIMAX_ENDPOINT")
+	if endpoint == "" {
+		endpoint = "https://api.minimax.io/anthropic/v1/messages"
+	}
 	return &enforcementState{
-		cwd:           cwd,
-		startTime:     startTime,
-		outputPaths:   paths,
-		maxRecoveries: 2, // 2 hard recoveries max per task; if it loops a 3rd time, give up
+		cwd:             cwd,
+		startTime:       startTime,
+		instruction:     instruction,
+		outputPaths:     paths,
+		maxRecoveries:   2,
+		advisorAPIKey:   apiKey,
+		advisorEndpoint: endpoint,
+		advisorInterval: 6,  // check every 6 calls
+		advisorMinCall:  8,  // don't intervene before call 8 — observe first, build context
 	}
 }
 
@@ -424,6 +462,561 @@ func (es *enforcementState) nudgeIfNoOutput() string {
 			"---\n"+
 			"Tool result follows below (which may be irrelevant — write the file FIRST):\n\n",
 		count, count, pathHint)
+}
+
+// heuristicAdvisor runs deterministic pattern checks on the agent's trace.
+// Catches obvious failure modes that LLM advisor misses.
+func (es *enforcementState) heuristicAdvisor() string {
+	es.mu.Lock()
+	calls := es.toolCallCount
+	recent := make([]string, len(es.recentToolCalls))
+	copy(recent, es.recentToolCalls)
+	instruction := es.instruction
+	wrote := es.wroteAny
+	es.mu.Unlock()
+
+	// Count tool types in recent history
+	webFetchCount := 0
+	writeCount := 0
+	bashCount := 0
+	for _, tc := range recent {
+		if strings.HasPrefix(tc, "web_fetch:") || strings.HasPrefix(tc, "web_search:") {
+			webFetchCount++
+		}
+		if strings.HasPrefix(tc, "write_file:") || strings.HasPrefix(tc, "edit_file:") {
+			writeCount++
+		}
+		if strings.HasPrefix(tc, "bash:") {
+			bashCount++
+		}
+	}
+
+	// Don't fire during observation phase or within 8-call cooldown
+	minCall := es.advisorMinCall
+	lastH := es.lastHeuristicAt
+	if calls < minCall || calls-lastH < 8 {
+		return ""
+	}
+
+	// Pattern 1: Has web_research_context URLs but zero web_fetch after 12+ calls
+	if calls >= 12 && !es.webResearchDone && webFetchCount == 0 && strings.Contains(instruction, "<web_research_context>") {
+		es.lastHeuristicAt = calls
+		return "[HEURISTIC ADVISOR] You have URLs in <web_research_context> from pre-flight search but haven't used web_fetch on any of them. " +
+			"web_fetch the most relevant URL NOW — it likely contains a reference implementation, technique, or solution pattern you need. " +
+			"Reading existing solutions is FASTER than reverse-engineering from scratch.\n\n"
+	}
+
+	// Pattern 2: 15+ calls with zero write_file (agent exploring forever)
+	if calls >= 15 && !wrote && writeCount == 0 {
+		if calls == 15 || calls == 22 {
+			return "[HEURISTIC ADVISOR] You have made " + fmt.Sprintf("%d", calls) + " tool calls but haven't written ANY output file. " +
+				"WRITE YOUR CURRENT BEST SOLUTION NOW — even if incomplete. An imperfect file scores higher than no file. " +
+				"You can always improve it after writing.\n\n"
+		}
+	}
+
+	// Pattern 3: 10+ consecutive bash calls (no read_file, write_file, web_search diversity)
+	if bashCount >= 10 && writeCount == 0 && webFetchCount == 0 {
+		if calls%10 == 0 {
+			return "[HEURISTIC ADVISOR] Last 10+ calls are all bash commands. Consider: " +
+				"(1) web_search or web_fetch for reference implementations, " +
+				"(2) write_file to save your progress, " +
+				"(3) read_file to study existing code more carefully. " +
+				"Variety of tools = faster progress.\n\n"
+		}
+	}
+
+	return ""
+}
+
+// autoVerifyAfterTool runs after write_file or bash calls. No minCall gate —
+// catches broken output from call 1 onwards. Only fires if agent has written
+// to output paths.
+func (es *enforcementState) autoVerifyAfterTool(toolName string) string {
+	es.mu.Lock()
+	wrote := es.wroteAny
+	es.mu.Unlock()
+	if !wrote {
+		return ""
+	}
+	// Only check after write_file or bash (which might produce output files)
+	if toolName != "write_file" && toolName != "bash" {
+		return ""
+	}
+	return es.autoVerifyOutput()
+}
+
+// autoVerifyOutput runs quick deterministic checks on output files.
+// Returns a user-message-ready string if something is wrong, empty if OK.
+func (es *enforcementState) autoVerifyOutput() string {
+	cwd := es.cwd
+
+	// Check each known output path
+	for _, p := range es.outputPaths {
+		fullPath := p
+		if !filepath.IsAbs(p) {
+			fullPath = filepath.Join(cwd, p)
+		}
+		info, err := os.Stat(fullPath)
+		if err != nil {
+			continue // file doesn't exist yet, not our problem
+		}
+
+		// Check: output file is suspiciously empty
+		if info.Size() == 0 {
+			return fmt.Sprintf("[AUTO-VERIFY] Output file %s exists but is EMPTY (0 bytes). "+
+				"This will score 0. Write actual content to it NOW.\n", p)
+		}
+	}
+
+	// Check: if cwd has decomp/decompressor binary + compressed output, test round-trip
+	decompBin := ""
+	for _, name := range []string{"decomp", "decompressor", "decompress"} {
+		if _, err := os.Stat(filepath.Join(cwd, name)); err == nil {
+			decompBin = name
+			break
+		}
+	}
+	compFile := ""
+	for _, name := range []string{"data.comp", "output.comp", "compressed.bin"} {
+		if info, err := os.Stat(filepath.Join(cwd, name)); err == nil && info.Size() > 0 {
+			compFile = name
+			break
+		}
+	}
+	origFile := ""
+	for _, name := range []string{"data.txt", "input.txt", "original.txt"} {
+		if info, err := os.Stat(filepath.Join(cwd, name)); err == nil && info.Size() > 0 {
+			origFile = name
+			break
+		}
+	}
+
+	if decompBin != "" && compFile != "" && origFile != "" {
+		// Run quick round-trip test
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "bash", "-c",
+			fmt.Sprintf("cat %s | ./%s 2>&1 | diff - %s 2>&1 | head -5", compFile, decompBin, origFile))
+		cmd.Dir = cwd
+		out, err := cmd.CombinedOutput()
+		result := strings.TrimSpace(string(out))
+
+		if err != nil || len(result) > 0 {
+			// Round-trip failed
+			compInfo, _ := os.Stat(filepath.Join(cwd, compFile))
+			origInfo, _ := os.Stat(filepath.Join(cwd, origFile))
+			compSize := int64(0)
+			origSize := int64(0)
+			if compInfo != nil {
+				compSize = compInfo.Size()
+			}
+			if origInfo != nil {
+				origSize = origInfo.Size()
+			}
+
+			msg := fmt.Sprintf("[AUTO-VERIFY FAILED] Round-trip test: cat %s | ./%s | diff - %s\n", compFile, decompBin, origFile)
+			msg += fmt.Sprintf("Original: %d bytes. Compressed: %d bytes.\n", origSize, compSize)
+			if compSize > origSize {
+				msg += fmt.Sprintf("CRITICAL: Compressed file (%d) is BIGGER than original (%d) — compression is not working!\n", compSize, origSize)
+			}
+			if len(result) > 0 {
+				if len(result) > 300 {
+					result = result[:300] + "..."
+				}
+				msg += fmt.Sprintf("Diff output: %s\n", result)
+			}
+			if err != nil {
+				msg += fmt.Sprintf("Error: %v\n", err)
+			}
+			msg += "Fix your compression algorithm. You have time remaining.\n"
+			return msg
+		}
+	}
+
+	return ""
+}
+
+// recordToolCall adds a summary to the rolling buffer for advisor context.
+// Also records key events (errors, writes, web activity) for cumulative summary.
+func (es *enforcementState) recordToolCall(toolName string, input any) {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	summary := toolName
+	if m, ok := input.(map[string]any); ok {
+		if cmd, ok := m["command"].(string); ok {
+			if len(cmd) > 80 {
+				cmd = cmd[:80] + "..."
+			}
+			summary += ": " + cmd
+		} else if q, ok := m["query"].(string); ok {
+			summary += ": " + q
+		} else if p, ok := m["path"].(string); ok {
+			summary += ": " + p
+			// For write_file: include first 100 chars of content so advisor
+			// knows WHAT was written, not just WHERE.
+			if content, ok := m["content"].(string); ok && len(content) > 0 {
+				snippet := strings.ReplaceAll(content, "\n", " ")
+				if len(snippet) > 100 {
+					snippet = snippet[:100] + "..."
+				}
+				summary += " → " + snippet
+			}
+		}
+	}
+	es.recentToolCalls = append(es.recentToolCalls, summary)
+	if len(es.recentToolCalls) > 16 {
+		es.recentToolCalls = es.recentToolCalls[len(es.recentToolCalls)-16:]
+	}
+	// Track web research done by agent
+	if strings.HasPrefix(toolName, "web_fetch") || strings.HasPrefix(toolName, "web_search") {
+		es.webResearchDone = true
+	}
+}
+
+// recordToolResult captures key events from tool results for advisor.
+func (es *enforcementState) recordToolResult(toolName, result string) {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+
+	// Track consecutive test failures (spiral detection)
+	if toolName == "bash" {
+		isFail := strings.Contains(result, "[exit code:") || strings.Contains(result, "Error") ||
+			strings.Contains(result, "FAIL") || strings.Contains(result, "Traceback") ||
+			strings.Contains(result, "diff") && strings.Contains(result, "differ")
+		if isFail {
+			es.consecutiveFails++
+		} else if len(result) > 20 { // meaningful success output
+			es.consecutiveFails = 0
+		}
+	}
+
+	// Capture errors
+	if strings.Contains(result, "[exit code:") || strings.Contains(result, "Error") ||
+		strings.Contains(result, "FAIL") || strings.Contains(result, "TIMEOUT") {
+		snippet := result
+		if len(snippet) > 150 {
+			snippet = snippet[:150] + "..."
+		}
+		snippet = strings.ReplaceAll(snippet, "\n", " ")
+		es.keyEvents = append(es.keyEvents, fmt.Sprintf("ERROR[call %d] %s: %s", es.toolCallCount, toolName, snippet))
+	}
+	// Capture bash output summary. Errors get 300 chars (Python tracebacks
+	// need space), normal output gets 150 chars (last part = key result).
+	if toolName == "bash" && len(result) > 0 {
+		hasError := strings.Contains(result, "Error") || strings.Contains(result, "Traceback") ||
+			strings.Contains(result, "FAIL") || strings.Contains(result, "[exit code:")
+		maxLen := 150
+		if hasError {
+			maxLen = 300
+		}
+		snippet := result
+		if len(snippet) > maxLen {
+			snippet = "..." + snippet[len(snippet)-maxLen:]
+		}
+		snippet = strings.ReplaceAll(snippet, "\n", " ")
+		es.keyEvents = append(es.keyEvents, fmt.Sprintf("BASH[call %d]: %s", es.toolCallCount, snippet))
+	}
+	// Capture web activity
+	if toolName == "web_fetch" || toolName == "web_search" {
+		snippet := result
+		if len(snippet) > 100 {
+			snippet = snippet[:100]
+		}
+		es.keyEvents = append(es.keyEvents, fmt.Sprintf("WEB[call %d] %s", es.toolCallCount, snippet))
+	}
+	// Add spiral warning to events if detected
+	if es.consecutiveFails >= 3 && es.consecutiveFails%3 == 0 {
+		es.keyEvents = append(es.keyEvents, fmt.Sprintf(
+			"⚠ SPIRAL[call %d]: %d consecutive test failures. Agent keeps rewriting but tests keep failing. Current approach is NOT working — needs fundamentally different algorithm or strategy.",
+			es.toolCallCount, es.consecutiveFails))
+	}
+
+	// Cap key events
+	if len(es.keyEvents) > 30 {
+		es.keyEvents = es.keyEvents[len(es.keyEvents)-30:]
+	}
+}
+
+// nudgeFromAdvisor checks for pending async advice and kicks off new advisor
+// goroutine if it's time. Non-blocking — advisor runs in background, result
+// picked up on the NEXT tool call.
+func (es *enforcementState) nudgeFromAdvisor() string {
+	es.mu.Lock()
+	pending := es.pendingAdvice
+	callCount := es.toolCallCount
+	lastCall := es.lastAdvisorCall
+	interval := es.advisorInterval
+	minCall := es.advisorMinCall
+	running := es.advisorRunning
+	apiKey := es.advisorAPIKey
+	es.mu.Unlock()
+
+	// Consume pending advice — but only after observation phase (minCall).
+	// Before minCall, advisor runs in background (fetches docs, builds plan)
+	// but holds advice silently. Agent works undisturbed.
+	if pending != "" && callCount >= minCall {
+		es.mu.Lock()
+		es.pendingAdvice = ""
+		injectFn := es.injectUserMsg
+		es.mu.Unlock()
+		if injectFn != nil {
+			injectFn(pending)
+			log.Printf("[advisor] injected user message from async advice (call %d, past minCall %d)\n", callCount, minCall)
+		}
+		return ""
+	}
+
+	// Kick off async advisor — start EARLY (even before minCall) to fetch
+	// docs and build plan in background. Advice is held until minCall.
+	if interval <= 0 || apiKey == "" || running || callCount-lastCall < interval {
+		return ""
+	}
+
+	es.mu.Lock()
+	es.advisorRunning = true
+	es.lastAdvisorCall = callCount
+	recent := make([]string, len(es.recentToolCalls))
+	copy(recent, es.recentToolCalls)
+	events := make([]string, len(es.keyEvents))
+	copy(events, es.keyEvents)
+	es.mu.Unlock()
+
+	go es.runAdvisorAsync(callCount, recent, events)
+	return ""
+}
+
+// runAdvisorAsync runs the advisor in a goroutine:
+// 1. Fetch web_research_context URLs (Go HTTP, no LLM)
+// 2. Call MiniMax with fetched content + trace → concrete advice
+// 3. Set pendingAdvice for user message injection
+//
+// This makes the advisor a "senior dev who reads the docs for you" —
+// instead of telling the agent "go read this URL", the advisor reads it
+// and gives concrete algorithm steps.
+func (es *enforcementState) runAdvisorAsync(callCount int, recent, events []string) {
+	defer func() {
+		es.mu.Lock()
+		es.advisorRunning = false
+		es.mu.Unlock()
+	}()
+
+	es.mu.Lock()
+	apiKey := es.advisorAPIKey
+	endpoint := es.advisorEndpoint
+	instruction := es.instruction
+	es.mu.Unlock()
+
+	var traceSummary strings.Builder
+	for i, tc := range recent {
+		traceSummary.WriteString(fmt.Sprintf("%d. %s\n", i+1, tc))
+	}
+
+	instrSnippet := instruction
+	if len(instrSnippet) > 300 {
+		instrSnippet = instrSnippet[:300] + "..."
+	}
+
+	// --- Phase 1: Fetch reference content (only if not already done) ---
+	var fetchedContent string
+	es.mu.Lock()
+	alreadyFetched := es.webResearchDone
+	es.mu.Unlock()
+
+	urlRe := regexp.MustCompile(`https?://[^\s\)<>\]]+`)
+	if !alreadyFetched {
+	if idx := strings.Index(instruction, "<web_research_context>"); idx >= 0 {
+		end := strings.Index(instruction[idx:], "</web_research_context>")
+		if end > 0 {
+			block := instruction[idx : idx+end]
+			urls := urlRe.FindAllString(block, -1)
+			// Fetch top 2 URLs (Go HTTP, not LLM — fast)
+			for i, u := range urls {
+				if i >= 2 {
+					break
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+				req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+				if err != nil {
+					cancel()
+					continue
+				}
+				req.Header.Set("User-Agent", "Mozilla/5.0")
+				resp, err := http.DefaultClient.Do(req)
+				cancel()
+				if err != nil {
+					continue
+				}
+				body, _ := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				content := string(body)
+				if strings.Contains(content[:min(500, len(content))], "<html") {
+					content = stripHTMLTags(content)
+				}
+				if len(content) > 3000 {
+					content = content[:3000]
+				}
+				if len(content) > 100 {
+					fetchedContent += fmt.Sprintf("--- Reference from %s ---\n%s\n\n", u, content)
+					log.Printf("[advisor] fetched %d bytes from %s\n", len(content), u[:min(60, len(u))])
+					es.mu.Lock()
+					es.webResearchDone = true
+					es.mu.Unlock()
+				}
+			}
+		}
+	}
+	} // end if !alreadyFetched
+
+	if len(fetchedContent) > 6000 {
+		fetchedContent = fetchedContent[:6000]
+	}
+
+	writtenFiles := ""
+	if entries, err := os.ReadDir(es.cwd); err == nil {
+		var files []string
+		for _, e := range entries {
+			if !e.IsDir() {
+				info, _ := e.Info()
+				if info != nil && info.ModTime().After(es.startTime) {
+					files = append(files, fmt.Sprintf("%s (%d bytes)", e.Name(), info.Size()))
+				}
+			}
+		}
+		if len(files) > 0 {
+			writtenFiles = "Files created/modified: " + strings.Join(files, ", ")
+		} else {
+			writtenFiles = "NO output files written yet!"
+		}
+	}
+
+	webFetchStatus := ""
+	if strings.Contains(instruction, "<web_research_context>") {
+		used := false
+		for _, tc := range recent {
+			if strings.HasPrefix(tc, "web_fetch:") || strings.HasPrefix(tc, "web_search:") {
+				used = true
+				break
+			}
+		}
+		if !used {
+			webFetchStatus = "WARNING: Agent has <web_research_context> with URLs but hasn't used web_fetch or web_search yet."
+		}
+	}
+
+	elapsedSec := int(time.Since(es.startTime).Seconds())
+	remainingSec := 900 - elapsedSec
+
+	keyEventsSummary := ""
+	if len(events) > 0 {
+		keyEventsSummary = "KEY EVENTS (errors, web, findings):\n"
+		for _, e := range events {
+			keyEventsSummary += "  " + e + "\n"
+		}
+	}
+
+	// Build advisor prompt — if we fetched reference content, ask for
+	// concrete algorithm steps. Otherwise, just monitor.
+	var advisorPrompt string
+	if fetchedContent != "" {
+		// "Senior dev who read the docs" mode — give concrete steps
+		advisorPrompt = fmt.Sprintf(
+			"You are a senior developer helping a junior coding agent.\n"+
+				"TASK:\n%s\n\n"+
+				"Agent's last actions:\n%s\n"+
+				"%s\n%s\n"+
+				"Elapsed: %ds. REMAINING: %ds.\n\n"+
+				"I fetched these reference materials for you:\n%s\n\n"+
+				"Based on the references and the task, give the agent CONCRETE implementation steps:\n"+
+				"- Which algorithm/approach to use (be specific)\n"+
+				"- Key data structures needed\n"+
+				"- Critical edge cases to handle\n"+
+				"- If the agent's current approach is wrong, say so directly and suggest the correct one\n"+
+				"Keep it to 3-5 actionable bullet points. The agent will read this as a user message.",
+			instrSnippet, traceSummary.String(),
+			writtenFiles, keyEventsSummary,
+			elapsedSec, remainingSec,
+			fetchedContent)
+	} else {
+		// Monitor mode — no fetched content, just check trajectory
+		advisorPrompt = fmt.Sprintf(
+			"You monitor an AI coding agent. Terminal-Bench 2.0, 900s limit.\n"+
+				"Elapsed: %ds. REMAINING: %ds. Calls: %d.\n\n"+
+				"TASK:\n%s\n\n"+
+				"Actions:\n%s\n"+
+				"%s\n%s\n%s\n"+
+				"Respond with EXACTLY ONE LINE:\n"+
+				"REDIRECT: [tool_name] [args] — [why]\n"+
+				"STOP: [reason]\n"+
+				"OK\n\n"+
+				"RULES:\n"+
+				"- VERIFY: Look at KEY EVENTS for test results. If test FAILED → REDIRECT with specific diagnosis (what failed and why, based on error message). If agent hasn't tested yet → REDIRECT to run test.\n"+
+				"- If agent writes code 3+ times without testing (bash) → REDIRECT to bash test.\n"+
+				"- If agent has working output + keeps changing it → STOP.\n"+
+				"- If <30%% time remaining and no output file → REDIRECT to write_file immediately.",
+			elapsedSec, remainingSec, callCount,
+			instrSnippet, len(recent), traceSummary.String(),
+			writtenFiles, webFetchStatus, keyEventsSummary)
+	}
+
+	reqBody := fmt.Sprintf(`{"model":"MiniMax-M2.7","max_tokens":150,"messages":[{"role":"user","content":"%s"}]}`,
+		strings.ReplaceAll(strings.ReplaceAll(advisorPrompt, `"`, `\"`), "\n", `\n`))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(reqBody))
+	if err != nil {
+		return
+	}
+	req.Header.Set("x-api-key", apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("anthropic-version", "2023-06-01")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("[advisor] API error: %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	var parsed struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		log.Printf("[advisor] parse error: %v\n", err)
+		return
+	}
+
+	advice := ""
+	for _, c := range parsed.Content {
+		if c.Type == "text" {
+			advice += c.Text
+		}
+	}
+	advice = strings.TrimSpace(advice)
+
+	if advice == "" || strings.ToUpper(strings.TrimSpace(advice)) == "OK" || len(advice) < 5 {
+		log.Printf("[advisor] agent on track (call %d)\n", callCount)
+		return
+	}
+
+	var formatted string
+	if strings.Contains(strings.ToUpper(advice), "STOP") {
+		log.Printf("[advisor] STOP signal at call %d: %s\n", callCount, advice[:min(100, len(advice))])
+		formatted = fmt.Sprintf("[ADVISOR — STOP] %s\nDo NOT make any more changes to output files. Your current solution looks correct. Run one final verification if you want, but do NOT overwrite what you have.\n\n", advice)
+	} else {
+		log.Printf("[advisor] REDIRECT at call %d: %s\n", callCount, advice[:min(100, len(advice))])
+		formatted = fmt.Sprintf("[ADVISOR INTERRUPT — step %d] %s\nYou MUST address this before continuing your current approach.\n\n", callCount, advice)
+	}
+
+	es.mu.Lock()
+	es.pendingAdvice = formatted
+	es.mu.Unlock()
 }
 
 // --- Tool error tracker ---
@@ -980,6 +1573,30 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 				log.Printf("[enforce] DOOM RECOVERY fired at call %d (doom_count=%d)\n", enforce.toolCallCount, doomDetector.detected)
 				result = doomNudge + result
 			}
+			// Track tool calls + results for heuristic + LLM advisor
+			enforce.recordToolCall(name, input)
+			enforce.recordToolResult(name, result)
+
+			// Auto-verify: disabled for now. password-recovery passed without it.
+			// Keep the code but don't run — add back when we have evidence it helps.
+			// if verifyMsg := enforce.autoVerifyAfterTool(name); verifyMsg != "" { ... }
+
+			// Heuristic advisor: deterministic pattern checks. Gated by minCall.
+			if heuristicNudge := enforce.heuristicAdvisor(); heuristicNudge != "" {
+				log.Printf("[heuristic-advisor] INJECTING USER MESSAGE at call %d\n", enforce.toolCallCount)
+				enforce.mu.Lock()
+				injectFn := enforce.injectUserMsg
+				enforce.mu.Unlock()
+				if injectFn != nil {
+					injectFn(heuristicNudge)
+				}
+			}
+
+			// LLM Advisor: every N calls, ask MiniMax to review trace.
+			if advisorNudge := enforce.nudgeFromAdvisor(); advisorNudge != "" {
+				log.Printf("[advisor] injected suggestion at call %d\n", enforce.toolCallCount)
+				result = advisorNudge + result
+			}
 			return result, err
 		}
 	}
@@ -1059,6 +1676,26 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 	backend, err := aiusechat.GetBackendByAPIType(chatOpts.Config.APIType)
 	if err != nil {
 		log.Fatalf("[wove-bench] backend error: %v", err)
+	}
+
+	// Wire user message injection for advisor/heuristic interrupts.
+	// This is the ONLY reliable way to change agent behavior — appending to
+	// tool results or returning errors gets ignored. A user message forces
+	// the model to respond as if a human typed it.
+	enforce.injectUserMsg = func(msg string) {
+		userMsg := &uctypes.AIMessage{
+			MessageId: uuid.New().String(),
+			Parts: []uctypes.AIMessagePart{
+				{Type: uctypes.AIMessagePartTypeText, Text: msg},
+			},
+		}
+		converted, convErr := backend.ConvertAIMessageToNativeChatMessage(*userMsg)
+		if convErr != nil {
+			log.Printf("[inject] conversion error: %v\n", convErr)
+			return
+		}
+		_ = chatstore.DefaultChatStore.PostMessage(chatOpts.ChatId, &chatOpts.Config, converted)
+		log.Printf("[inject] user message injected (%d bytes)\n", len(msg))
 	}
 
 	// --- LocalContextMiddleware: pre-populate cwd listing + source tree + repo_map ---
