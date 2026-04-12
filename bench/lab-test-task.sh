@@ -15,14 +15,20 @@ STAMP=$(date +%Y%m%d-%H%M%S)
 OUT_BASE="./lab-results/${STAMP}-${TASK}"
 mkdir -p "$OUT_BASE"
 
-# Load API key from .env if not set
-if [ -z "${MINIMAX_API_KEY:-}" ] && [ -f .env ]; then
-  export MINIMAX_API_KEY=$(grep -E '^MINIMAX_API_KEY=' .env | head -1 | cut -d= -f2- | tr -d '"'"'")
+# Load full .env so WOVE_MINIMAX_API_TYPE / WOVE_MINIMAX_ENDPOINT (and any other
+# WOVE_* vars) propagate to wove_agent.py subprocess. Without this the agent
+# silently falls back to openai-chat regardless of .env contents.
+if [ -f .env ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
 fi
 if [ -z "${MINIMAX_API_KEY:-}" ]; then
   echo "ERROR: MINIMAX_API_KEY not set and not found in .env" >&2
   exit 1
 fi
+echo "[setup] api_type=${WOVE_MINIMAX_API_TYPE:-openai-chat (default)} endpoint=${WOVE_MINIMAX_ENDPOINT:-default}"
 
 # Combinations to test. Add/remove as needed.
 COMBO_NAMES=(

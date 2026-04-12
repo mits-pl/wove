@@ -24,13 +24,20 @@ STAMP=$(date +%Y%m%d-%H%M%S)
 OUT_BASE="./lab-results/multi-${STAMP}"
 mkdir -p "$OUT_BASE"
 
-if [ -z "${MINIMAX_API_KEY:-}" ] && [ -f .env ]; then
-  export MINIMAX_API_KEY=$(grep -E '^MINIMAX_API_KEY=' .env | head -1 | cut -d= -f2- | tr -d '"'"'")
+if [ -f .env ]; then
+  # Load WOVE_* and MINIMAX_* vars (api type, endpoint, key) so wove_agent.py
+  # subprocess inherits them. Without this, the agent silently falls back to
+  # openai-chat endpoint and our anthropic prompt-caching never engages.
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
 fi
 if [ -z "${MINIMAX_API_KEY:-}" ]; then
   echo "ERROR: MINIMAX_API_KEY not set" >&2
   exit 1
 fi
+echo "[setup] api_type=${WOVE_MINIMAX_API_TYPE:-openai-chat (default)} endpoint=${WOVE_MINIMAX_ENDPOINT:-default}"
 
 if [ ! -f dist/bin/wove-bench-linux-amd64 ]; then
   echo "ERROR: dist/bin/wove-bench-linux-amd64 missing. Run: task bench:build" >&2

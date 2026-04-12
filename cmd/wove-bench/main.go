@@ -8,11 +8,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -21,6 +23,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -873,6 +876,14 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 	if tracer != nil {
 		defer tracer.close()
 	}
+	// Background shell manager for `bash run_in_background=true`. Lifetime is
+	// bound to runAgent: defer killAll() ensures any orphan child processes
+	// from the agent are stopped before the function returns.
+	bgMgr := newBgShellManager()
+	defer bgMgr.killAll()
+	// Notes store: persistent K/V across the agent run, survives compaction
+	// (lives outside message history). Mini-Agent compatible.
+	notes := newNotesStore()
 	// Create persistent terminal session (unless disabled)
 	var termSession *terminalSession
 	if !cfg.NoPty {
@@ -886,7 +897,7 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 		}
 	}
 
-	tools := buildStandaloneTools(cfg.CWD, doomDetector, readFiles, writes, termSession, todos, toolOpts{
+	tools := buildStandaloneTools(cfg.CWD, doomDetector, readFiles, writes, termSession, todos, bgMgr, notes, toolOpts{
 		NoWeb:     cfg.NoWeb,
 		NoRepoMap: cfg.NoRepoMap,
 		NoTodo:    cfg.NoTodo,
@@ -1389,6 +1400,11 @@ func makeSubTaskTool(cfg agentConfig, startTime time.Time) func(any) (string, er
 		reads := newReadTracker()
 		writes := newWriteTracker()
 		todos := newTodoTracker()
+		// Workers get isolated bg shell + notes — child agents shouldn't share
+		// state with the parent or other workers.
+		bgMgr := newBgShellManager()
+		defer bgMgr.killAll()
+		notes := newNotesStore()
 		var termSession *terminalSession
 		if !cfg.NoPty {
 			var termErr error
@@ -1401,7 +1417,7 @@ func makeSubTaskTool(cfg agentConfig, startTime time.Time) func(any) (string, er
 			}
 		}
 
-		workerTools := buildStandaloneTools(cfg.CWD, doom, reads, writes, termSession, todos, toolOpts{
+		workerTools := buildStandaloneTools(cfg.CWD, doom, reads, writes, termSession, todos, bgMgr, notes, toolOpts{
 			NoWeb:     cfg.NoWeb,
 			NoRepoMap: cfg.NoRepoMap,
 			NoTodo:    false, // workers always get todo
@@ -1550,7 +1566,7 @@ Be concise — lead with actions and results, not explanations.
 ## Environment
 - Working directory: %s
 - Platform: Linux (Docker container)
-- Tools: bash (persistent), term_send_input, term_get_scrollback, read_file, write_file, edit_file, grep, list_dir, repo_map, web_search, web_fetch, todo_write
+- Tools: bash (persistent, supports run_in_background), bash_output, bash_kill, term_send_input, term_get_scrollback, read_file, write_file, edit_file, grep, list_dir, repo_map, web_search, web_fetch, todo_write, record_note, recall_notes, run_sub_task
 - Act autonomously — never ask for confirmation, never stop to ask "should I continue?"
 - This conversation has unlimited context. Do NOT stop until the objective is fully achieved.
 - Git is initialized for checkpointing. If your approach fails after 3 attempts, run: git checkout . to reset and try a COMPLETELY different strategy.
@@ -1604,7 +1620,11 @@ Do not keep patching a broken approach. Fresh start is faster.
 Start at Level 1. Only go to Level 2 if it fails. Only go to Level 3 if Level 2 fails.
 
 ## Tool Tips (READ CAREFULLY)
-- bash: State persists (cd, env, venv). Default timeout 120s. Pass timeout_sec for longer ops.
+- bash: State persists (cd, env, venv). Default timeout 120s. Pass timeout_sec for longer ops. For LONG-RUNNING commands (servers, training loops, suspected infinite loops), use run_in_background=true — returns a bash_id immediately. Then poll with bash_output (incremental new lines, optional regex filter), and stop with bash_kill. The persistent terminal is BLOCKED while a foreground bash runs, so a hang there wastes the timeout AND the recovery — background mode avoids that.
+- bash_output: Read new lines from a bash_id since your last call. Pass filter="ERROR|FAIL" to grep matching lines only. Returns status (running/exited/killed) so you know when the process finished.
+- bash_kill: Terminate a background bash_id. Use immediately if a process is hung or you don't need its output anymore.
+- record_note: Save a SHORT, KEYED finding outside message history. Use for: format gotchas, verifier expectations, wrong approaches you already ruled out, exact error messages, found magic numbers/passwords. Saves tokens vs repeating in messages, survives compaction. Example: record_note("verifier_expected_today_error_count","370 — counts LINES with [ERROR] tag, not substrings").
+- recall_notes: List all notes (no key) or read one (with key). Call this when starting a retry or when something feels familiar.
 - read_file: Returns XML-tagged content with line numbers. Use offset/limit for large files. MUST read before edit.
 - edit_file: old_string must be unique. If not found, re-read file — content changed.
 - repo_map: Call FIRST on codebases with 3+ files. Shows classes/functions/types. Faster than reading every file.
@@ -1699,11 +1719,11 @@ type toolOpts struct {
 	NoTodo    bool
 }
 
-func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker, writes *writeTracker, term *terminalSession, todos *todoTracker, opts toolOpts) []uctypes.ToolDefinition {
+func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker, writes *writeTracker, term *terminalSession, todos *todoTracker, bgMgr *bgShellManager, notes *notesStore, opts toolOpts) []uctypes.ToolDefinition {
 	all := []uctypes.ToolDefinition{
 		{
 			Name:        "bash",
-			Description: "Run a bash command. State persists across calls.",
+			Description: "Run a bash command. State persists across calls. Set run_in_background=true for long-running processes (servers, training loops) — returns a bash_id you can poll with bash_output and stop with bash_kill.",
 			InputSchema: map[string]any{
 				"type":     "object",
 				"required": []any{"command"},
@@ -1714,11 +1734,82 @@ func buildStandaloneTools(cwd string, doom *doomLoopDetector, reads *readTracker
 					},
 					"timeout_sec": map[string]any{
 						"type":        "integer",
-						"description": "Timeout in seconds (default: 60)",
+						"description": "Timeout in seconds (default: 60). Ignored when run_in_background=true.",
+					},
+					"run_in_background": map[string]any{
+						"type":        "boolean",
+						"description": "If true, spawn the command as a background process. Returns bash_id immediately. Use bash_output to poll, bash_kill to stop. Default: false.",
 					},
 				},
 			},
-			ToolTextCallback: makeBashTool(cwd, doom, term),
+			ToolTextCallback: makeBashTool(cwd, doom, term, bgMgr),
+		},
+		{
+			Name:        "bash_output",
+			Description: "Read new output from a background bash process started with bash run_in_background=true. Returns lines emitted since the last call (incremental). Optionally filters lines by regex.",
+			InputSchema: map[string]any{
+				"type":     "object",
+				"required": []any{"bash_id"},
+				"properties": map[string]any{
+					"bash_id": map[string]any{
+						"type":        "string",
+						"description": "The bash_id returned by bash with run_in_background=true",
+					},
+					"filter": map[string]any{
+						"type":        "string",
+						"description": "Optional regex to filter lines (e.g. 'ERROR|WARN'). Only matching lines are returned.",
+					},
+				},
+			},
+			ToolTextCallback: makeBashOutputTool(bgMgr),
+		},
+		{
+			Name:        "bash_kill",
+			Description: "Stop a background bash process started with bash run_in_background=true.",
+			InputSchema: map[string]any{
+				"type":     "object",
+				"required": []any{"bash_id"},
+				"properties": map[string]any{
+					"bash_id": map[string]any{
+						"type":        "string",
+						"description": "The bash_id to terminate",
+					},
+				},
+			},
+			ToolTextCallback: makeBashKillTool(bgMgr),
+		},
+		{
+			Name:        "record_note",
+			Description: "Save an important finding under a key. Use for things you want to remember LATER but don't want polluting message history (which gets compacted). Examples: 'task_format = expects [SEVERITY] tag with brackets', 'verifier_path = /tests/test_outputs.py', 'wrong_approach = grep -o counts substrings not lines'. Overwrites existing note with same key.",
+			InputSchema: map[string]any{
+				"type":     "object",
+				"required": []any{"key", "content"},
+				"properties": map[string]any{
+					"key": map[string]any{
+						"type":        "string",
+						"description": "Short slug identifying the note (snake_case). Same key overwrites.",
+					},
+					"content": map[string]any{
+						"type":        "string",
+						"description": "The finding to save. Be concise and specific.",
+					},
+				},
+			},
+			ToolTextCallback: makeRecordNoteTool(notes),
+		},
+		{
+			Name:        "recall_notes",
+			Description: "List all recorded notes (with previews) or read one by key. Call WITHOUT key for the index, with key to read full content. Use this when you suspect you discovered something earlier that's relevant to the current step.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"key": map[string]any{
+						"type":        "string",
+						"description": "Optional. If set, returns the full content of that note. If omitted, returns the index of all notes.",
+					},
+				},
+			},
+			ToolTextCallback: makeRecallNotesTool(notes),
 		},
 		{
 			Name:        "term_send_input",
@@ -2070,11 +2161,28 @@ func truncateForHash(s string) string {
 	return s
 }
 
-func makeBashTool(cwd string, doom *doomLoopDetector, term *terminalSession) func(any) (string, error) {
+func makeBashTool(cwd string, doom *doomLoopDetector, term *terminalSession, bgMgr *bgShellManager) func(any) (string, error) {
 	return func(input any) (string, error) {
 		command := getStr(input, "command")
 		if command == "" {
 			return "", fmt.Errorf("command is required")
+		}
+
+		// Background mode (Mini-Agent compatible): spawn detached, return bash_id
+		// for later polling via bash_output. NEVER goes through persistent tty —
+		// background processes shouldn't share state with foreground commands.
+		if runBg, ok := input.(map[string]any); ok {
+			if v, vok := runBg["run_in_background"].(bool); vok && v {
+				if bgMgr == nil {
+					return "", fmt.Errorf("background bash not available in this run")
+				}
+				sh, err := bgMgr.start(cwd, command)
+				if err != nil {
+					return "", fmt.Errorf("background start: %w", err)
+				}
+				log.Printf("[tool:bash] background bash_id=%s cmd=%s\n", sh.id, command)
+				return fmt.Sprintf("[background started bash_id=%s] use bash_output to read, bash_kill to stop", sh.id), nil
+			}
 		}
 
 		if doom.record("bash", truncateForHash(command)) {
@@ -2099,11 +2207,14 @@ func makeBashTool(cwd string, doom *doomLoopDetector, term *terminalSession) fun
 					output = output[:50000] + "\n\n... [TRUNCATED: showing first and last 50KB of " + fmt.Sprintf("%d", len(output)) + " total bytes — use grep/tail for specific content] ...\n\n" + output[len(output)-50000:]
 					wasTruncated = true
 				}
+				// Markers PREPENDED — model attention bias is on the start of
+				// long outputs; markers buried at the end after kilobytes of
+				// stdout get ignored (observed in adaptive-rejection-sampler).
 				if !completed {
-					output += "\n[TIMEOUT: command still running after " + fmt.Sprintf("%d", timeoutSec) + "s — use term_get_scrollback to see more output]"
+					output = "[TIMEOUT after " + fmt.Sprintf("%d", timeoutSec) + "s] The command did not finish. The persistent terminal session was reset (next bash call uses a fresh shell — `cd`, `export`, venv state is LOST). REQUIRED next step for THIS command: re-run with run_in_background=true → returns bash_id immediately → poll with bash_output → stop with bash_kill. Bumping timeout_sec will NOT help if the process is in an infinite loop. You may also call term_get_scrollback for tail of the wedged output.\n\n" + output
 				}
 				if wasTruncated {
-					output = "[OUTPUT TRUNCATED — see markers below]\n" + output
+					output = "[OUTPUT TRUNCATED — first and last 50KB shown]\n" + output
 				}
 				return output, nil
 			}
@@ -2182,11 +2293,24 @@ func makeReadFileTool(cwd string, doom *doomLoopDetector, reads *readTracker) fu
 		}
 		fullPath := resolvePath(cwd, path)
 
-		if doom.record("read_file", truncateForHash(fullPath)) {
-			return "<doom_loop_warning>You already read this file. Use the content you have — don't re-read it.</doom_loop_warning>", nil
+		offset := 0
+		limit := 2000
+		if o, ok := getFloat(input, "offset"); ok {
+			offset = int(o)
+		}
+		if l, ok := getFloat(input, "limit"); ok && l > 0 {
+			limit = int(l)
 		}
 
-		log.Printf("[tool:read_file] %s\n", fullPath)
+		// Doom check uses (path, offset, limit) so paginating through a large
+		// file via successive offsets is NOT mistaken for a loop. Triple-read
+		// of the EXACT same fragment still triggers (rare but real loop).
+		doomKey := fmt.Sprintf("%s:%d:%d", fullPath, offset, limit)
+		if doom.record("read_file", truncateForHash(doomKey)) {
+			return "<doom_loop_warning>You already read this exact fragment 3 times in a row. Use the content you have — don't re-read it.</doom_loop_warning>", nil
+		}
+
+		log.Printf("[tool:read_file] %s offset=%d limit=%d\n", fullPath, offset, limit)
 
 		data, err := os.ReadFile(fullPath)
 		if err != nil {
@@ -2197,14 +2321,6 @@ func makeReadFileTool(cwd string, doom *doomLoopDetector, reads *readTracker) fu
 		reads.markRead(fullPath)
 
 		lines := strings.Split(string(data), "\n")
-		offset := 0
-		limit := 2000
-		if o, ok := getFloat(input, "offset"); ok {
-			offset = int(o)
-		}
-		if l, ok := getFloat(input, "limit"); ok && l > 0 {
-			limit = int(l)
-		}
 
 		if offset >= len(lines) {
 			return fmt.Sprintf("(file has %d lines, offset %d is past end)", len(lines), offset), nil
@@ -2921,3 +3037,339 @@ func (c *outputCollector) Flush()          {}
 
 func (c *outputCollector) SetWriteDeadline(time.Time) error { return nil }
 func (c *outputCollector) SetReadDeadline(time.Time) error  { return nil }
+
+// ============================================================================
+// Background shell manager — Mini-Agent compatible bash background execution.
+// Lets the model start long-running processes (servers, training loops) and
+// poll their output without blocking the main bash tool. Lifetime is bound to
+// runAgent: all background shells are killed via killAll() in the defer.
+// ============================================================================
+
+const bgShellMaxLines = 5000     // ring buffer cap per shell
+const bgShellMaxOutputBytes = 32 * 1024 // truncation cap per bash_output call
+
+type bgShell struct {
+	id        string
+	cmdLine   string
+	startedAt time.Time
+
+	mu       sync.Mutex
+	cmd      *exec.Cmd
+	output   []string // line-buffered (stdout+stderr interleaved)
+	lastIdx  int      // last index returned by bash_output
+	status   string   // "running", "exited", "killed", "error"
+	exitCode int
+}
+
+type bgShellManager struct {
+	mu     sync.Mutex
+	shells map[string]*bgShell
+}
+
+func newBgShellManager() *bgShellManager {
+	return &bgShellManager{shells: make(map[string]*bgShell)}
+}
+
+func (m *bgShellManager) start(cwd, cmdLine string) (*bgShell, error) {
+	cmd := exec.Command("bash", "-c", cmdLine)
+	cmd.Dir = cwd
+	cmd.Env = append(os.Environ(), "HOME=/root", "TERM=xterm-256color")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("stdout pipe: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf("stderr pipe: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("start: %w", err)
+	}
+	id := uuid.New().String()
+	if len(id) > 8 {
+		id = id[:8]
+	}
+	sh := &bgShell{
+		id:        id,
+		cmdLine:   cmdLine,
+		startedAt: time.Now(),
+		cmd:       cmd,
+		output:    make([]string, 0, 64),
+		status:    "running",
+	}
+	go pumpBgShellOutput(sh, stdout)
+	go pumpBgShellOutput(sh, stderr)
+	go func() {
+		waitErr := cmd.Wait()
+		sh.mu.Lock()
+		defer sh.mu.Unlock()
+		if sh.status != "running" {
+			return
+		}
+		if waitErr == nil {
+			sh.status = "exited"
+			sh.exitCode = 0
+			return
+		}
+		if exitErr, ok := waitErr.(*exec.ExitError); ok {
+			sh.status = "exited"
+			sh.exitCode = exitErr.ExitCode()
+			return
+		}
+		sh.status = "error"
+		sh.output = append(sh.output, fmt.Sprintf("[wove-bench] wait error: %v", waitErr))
+	}()
+
+	m.mu.Lock()
+	m.shells[id] = sh
+	m.mu.Unlock()
+	return sh, nil
+}
+
+func pumpBgShellOutput(sh *bgShell, r io.Reader) {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		sh.mu.Lock()
+		sh.output = append(sh.output, line)
+		// Ring-buffer cap: drop oldest in chunks of 100 to amortize
+		if len(sh.output) > bgShellMaxLines+100 {
+			drop := len(sh.output) - bgShellMaxLines
+			sh.output = append([]string(nil), sh.output[drop:]...)
+			sh.lastIdx -= drop
+			if sh.lastIdx < 0 {
+				sh.lastIdx = 0
+			}
+		}
+		sh.mu.Unlock()
+	}
+}
+
+func (m *bgShellManager) get(id string) *bgShell {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.shells[id]
+}
+
+func (m *bgShellManager) list() []*bgShell {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]*bgShell, 0, len(m.shells))
+	for _, sh := range m.shells {
+		out = append(out, sh)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].startedAt.Before(out[j].startedAt) })
+	return out
+}
+
+func (sh *bgShell) kill() {
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	if sh.status != "running" {
+		return
+	}
+	if sh.cmd != nil && sh.cmd.Process != nil {
+		_ = sh.cmd.Process.Kill()
+	}
+	sh.status = "killed"
+}
+
+func (m *bgShellManager) killAll() {
+	m.mu.Lock()
+	shells := make([]*bgShell, 0, len(m.shells))
+	for _, sh := range m.shells {
+		shells = append(shells, sh)
+	}
+	m.mu.Unlock()
+	for _, sh := range shells {
+		sh.kill()
+	}
+}
+
+// readNew returns lines emitted since the last call, optionally filtered by
+// regex. Truncates to bgShellMaxOutputBytes from the END (most recent wins).
+func (sh *bgShell) readNew(filter string) (string, int, string, error) {
+	var pattern *regexp.Regexp
+	if filter != "" {
+		p, err := regexp.Compile(filter)
+		if err != nil {
+			return "", 0, "", fmt.Errorf("invalid filter regex: %w", err)
+		}
+		pattern = p
+	}
+
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	newLines := sh.output[sh.lastIdx:]
+	sh.lastIdx = len(sh.output)
+	status := sh.status
+	exitCode := sh.exitCode
+
+	var picked []string
+	if pattern != nil {
+		for _, ln := range newLines {
+			if pattern.MatchString(ln) {
+				picked = append(picked, ln)
+			}
+		}
+	} else {
+		picked = make([]string, len(newLines))
+		copy(picked, newLines)
+	}
+
+	joined := strings.Join(picked, "\n")
+	if len(joined) > bgShellMaxOutputBytes {
+		// Keep tail — most recent output is usually what the model wants.
+		joined = "[truncated " + fmt.Sprintf("%d", len(joined)-bgShellMaxOutputBytes) + " older bytes]\n" + joined[len(joined)-bgShellMaxOutputBytes:]
+	}
+
+	statusLine := fmt.Sprintf("[bash_id=%s status=%s", sh.id, status)
+	if status != "running" {
+		statusLine += fmt.Sprintf(" exit_code=%d", exitCode)
+	}
+	statusLine += "]"
+	return joined, len(picked), statusLine, nil
+}
+
+// ============================================================================
+// Notes store — strukturalna pamięć między toolcalls. Mini-Agent compatible
+// (record_note / recall_notes). Notatki są ważnymi odkryciami które agent
+// chce trzymać poza message historii (żeby się nie kasowały przy compaction).
+// ============================================================================
+
+type noteEntry struct {
+	Key       string
+	Content   string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type notesStore struct {
+	mu    sync.Mutex
+	notes map[string]*noteEntry
+	order []string
+}
+
+func newNotesStore() *notesStore {
+	return &notesStore{notes: make(map[string]*noteEntry)}
+}
+
+func (n *notesStore) record(key, content string) *noteEntry {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	now := time.Now()
+	if e, ok := n.notes[key]; ok {
+		e.Content = content
+		e.UpdatedAt = now
+		return e
+	}
+	e := &noteEntry{Key: key, Content: content, CreatedAt: now, UpdatedAt: now}
+	n.notes[key] = e
+	n.order = append(n.order, key)
+	return e
+}
+
+func (n *notesStore) recall(key string) (*noteEntry, bool) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	e, ok := n.notes[key]
+	return e, ok
+}
+
+func (n *notesStore) list() []*noteEntry {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	out := make([]*noteEntry, 0, len(n.order))
+	for _, k := range n.order {
+		if e, ok := n.notes[k]; ok {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// ============================================================================
+// Tool callbacks for background bash, notes, and invoke_skill.
+// ============================================================================
+
+func makeBashOutputTool(bgMgr *bgShellManager) func(any) (string, error) {
+	return func(input any) (string, error) {
+		bashID := getStr(input, "bash_id")
+		if bashID == "" {
+			return "", fmt.Errorf("bash_id is required")
+		}
+		filter := getStr(input, "filter")
+		sh := bgMgr.get(bashID)
+		if sh == nil {
+			return "", fmt.Errorf("bash_id %q not found", bashID)
+		}
+		out, n, statusLine, err := sh.readNew(filter)
+		if err != nil {
+			return "", err
+		}
+		if out == "" {
+			return statusLine + "\n(no new output)", nil
+		}
+		return statusLine + fmt.Sprintf(" new_lines=%d\n", n) + out, nil
+	}
+}
+
+func makeBashKillTool(bgMgr *bgShellManager) func(any) (string, error) {
+	return func(input any) (string, error) {
+		bashID := getStr(input, "bash_id")
+		if bashID == "" {
+			return "", fmt.Errorf("bash_id is required")
+		}
+		sh := bgMgr.get(bashID)
+		if sh == nil {
+			return "", fmt.Errorf("bash_id %q not found", bashID)
+		}
+		sh.kill()
+		return fmt.Sprintf("[bash_id=%s killed]", bashID), nil
+	}
+}
+
+func makeRecordNoteTool(notes *notesStore) func(any) (string, error) {
+	return func(input any) (string, error) {
+		key := getStr(input, "key")
+		content := getStr(input, "content")
+		if key == "" {
+			return "", fmt.Errorf("key is required")
+		}
+		if content == "" {
+			return "", fmt.Errorf("content is required")
+		}
+		notes.record(key, content)
+		log.Printf("[tool:record_note] key=%s len=%d\n", key, len(content))
+		return fmt.Sprintf("[note saved] key=%s bytes=%d", key, len(content)), nil
+	}
+}
+
+func makeRecallNotesTool(notes *notesStore) func(any) (string, error) {
+	return func(input any) (string, error) {
+		key := getStr(input, "key")
+		if key != "" {
+			e, ok := notes.recall(key)
+			if !ok {
+				return "", fmt.Errorf("note %q not found", key)
+			}
+			return fmt.Sprintf("[note key=%s updated=%s]\n%s", e.Key, e.UpdatedAt.Format(time.RFC3339), e.Content), nil
+		}
+		all := notes.list()
+		if len(all) == 0 {
+			return "(no notes recorded yet — use record_note to save important findings)", nil
+		}
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("[%d note(s) recorded]\n", len(all)))
+		for _, e := range all {
+			preview := e.Content
+			if len(preview) > 200 {
+				preview = preview[:200] + "..."
+			}
+			preview = strings.ReplaceAll(preview, "\n", " ")
+			sb.WriteString(fmt.Sprintf("- %s (updated %s, %d bytes): %s\n", e.Key, e.UpdatedAt.Format("15:04:05"), len(e.Content), preview))
+		}
+		return sb.String(), nil
+	}
+}

@@ -150,13 +150,45 @@ func (ts *terminalSession) runCommand(cmd string, timeoutSec int) (string, bool,
 		time.Sleep(30 * time.Millisecond)
 	}
 
-	// Timeout — return what we have
+	// Timeout — try to recover the session by sending Ctrl+C twice. If the
+	// shell is responsive (no actual hang in foreground), the marker shows up
+	// quickly. If not, we mark the session closed so the bash tool falls back
+	// to stateless exec for subsequent calls — staying with this broken pty
+	// would cost the timeout budget on every later command (we observed this:
+	// `pkill` itself wedged for 120s because tty was blocked by an Rscript).
 	ts.mu.Lock()
 	relStart := startAbs - ts.bufOffset
 	if relStart < 0 {
 		relStart = 0
 	}
 	out := string(ts.buffer[relStart:])
+	ts.mu.Unlock()
+
+	// Send two Ctrl+C and wait briefly for marker
+	_, _ = ts.ptyFile.Write([]byte{0x03, 0x03})
+	recoveryDeadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(recoveryDeadline) {
+		ts.mu.Lock()
+		relStart2 := startAbs - ts.bufOffset
+		if relStart2 < 0 {
+			relStart2 = 0
+		}
+		buf := string(ts.buffer[relStart2:])
+		ts.mu.Unlock()
+		if idx := strings.Index(buf, marker+" "); idx >= 0 {
+			out = buf[:idx]
+			if nl := strings.Index(out, "\n"); nl >= 0 && nl < 500 {
+				out = out[nl+1:]
+			}
+			out = strings.TrimRight(out, "\r\n$ ")
+			return out, false, nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// Recovery failed — pty is wedged. Mark closed so bash tool falls back.
+	ts.mu.Lock()
+	ts.closed = true
 	ts.mu.Unlock()
 	return out, false, nil
 }
