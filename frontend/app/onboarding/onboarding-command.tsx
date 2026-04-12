@@ -108,8 +108,8 @@ Use Ctrl-Shift + Number (1-9) to focus a specific block by its position.`;
 
 export const ViewLogoCommand = ({ onComplete }: { onComplete?: () => void }) => {
     return (
-        <FakeCommand command="wsh view public/wave-logo.png" onComplete={onComplete}>
-            <FakeBlock icon="image" name="wave-logo.png" imgsrc={waveLogo} />
+        <FakeCommand command="wsh view public/wove-logo.png" onComplete={onComplete}>
+            <FakeBlock icon="image" name="wove-logo.png" imgsrc={waveLogo} />
         </FakeCommand>
     );
 };
@@ -119,7 +119,7 @@ export const EditBashrcCommand = ({ onComplete }: { onComplete?: () => void }) =
     const bashrcContent = `# Aliases
 alias ll="ls -lah"
 alias gst="git status"
-alias wave="wsh"
+alias wove="wsh"
 
 # Custom prompt
 PS1="\\[\\e[32m\\]\\u@\\h\\[\\e[0m\\]:\\[\\e[34m\\]\\w\\[\\e[0m\\]\\$ "
