@@ -145,6 +145,16 @@ func (ts *terminalSession) runCommand(cmd string, timeoutSec int) (string, bool,
 			}
 			// Strip trailing prompt
 			output = strings.TrimRight(output, "\r\n$ ")
+			// Parse exit code from marker line: "__DONE_N__ <exitcode>\n"
+			// This is critical — without it the agent never sees non-zero
+			// exit codes and thinks failed tests passed (observed on
+			// break-filter-js-from-html: agent saw no exit code, assumed
+			// success, stopped iterating).
+			after := buf[idx+len(marker)+1:] // skip "marker "
+			exitCodeStr := strings.TrimSpace(strings.SplitN(after, "\n", 2)[0])
+			if exitCodeStr != "" && exitCodeStr != "0" {
+				output += "\n[exit code: " + exitCodeStr + "]"
+			}
 			return output, true, nil
 		}
 		time.Sleep(30 * time.Millisecond)

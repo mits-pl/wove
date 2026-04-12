@@ -785,6 +785,14 @@ func main() {
 			sb.WriteString(tc)
 			sb.WriteString("\n</test_files_content>\n\nThe above shows the EXACT tests that will verify your solution. Study them carefully before implementing.")
 		}
+		if !noWeb {
+			wc := buildWebResearchContext(instruction)
+			if wc != "" {
+				sb.WriteString("\n\n<web_research_context>\n")
+				sb.WriteString(wc)
+				sb.WriteString("\n</web_research_context>\n\nThe above shows web research results relevant to your task.")
+			}
+		}
 		fmt.Println(sb.String())
 		fmt.Println()
 		fmt.Printf("=== STATS: instruction=%d local_context=%d test_content=%d total=%d bytes ===\n",
@@ -1070,8 +1078,15 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 		log.Printf("[wove-bench] injected %d bytes of test content into instruction\n", len(testContent))
 	}
 
-	// Build combined initial message: instruction + local_context + test_files_content
-	if localCtx != "" || testContent != "" {
+	// Pre-flight web research is handled by wove_agent.py on the HOST side
+	// (MiniMax Token Plan search API). It injects <web_research_context> into
+	// the instruction BEFORE passing it to wove-bench. We do NOT duplicate
+	// that here — running curl inside Docker containers fails (no curl, DDG
+	// CAPTCHA) and the Python version has access to the API key directly.
+	var webCtx string
+
+	// Build combined initial message: instruction + local_context + test_files_content + web_research
+	if localCtx != "" || testContent != "" || webCtx != "" {
 		var fullText strings.Builder
 		fullText.WriteString(cfg.Instruction)
 		if localCtx != "" {
@@ -1083,6 +1098,11 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 			fullText.WriteString("\n\n<test_files_content>\n")
 			fullText.WriteString(testContent)
 			fullText.WriteString("\n</test_files_content>\n\nThe above shows the EXACT tests that will verify your solution. Study them carefully before implementing.")
+		}
+		if webCtx != "" {
+			fullText.WriteString("\n\n<web_research_context>\n")
+			fullText.WriteString(webCtx)
+			fullText.WriteString("\n</web_research_context>\n\nThe above shows web research results relevant to your task. Use these references and techniques — they may contain algorithms, code patterns, or bypass techniques that help you solve the task faster. You still have web_search/web_fetch tools for additional research.")
 		}
 		aiMessage.Parts = []uctypes.AIMessagePart{
 			{Type: uctypes.AIMessagePartTypeText, Text: fullText.String()},
@@ -1201,25 +1221,31 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 	// --- Forced verification step ---
 	// After agent finishes, inject a verification turn.
 	// Adapts based on whether /tests/ exists in the container.
-	if aiMetrics != nil && aiMetrics.ToolUseCount > 0 && ctx.Err() == nil {
-		log.Printf("[wove-bench] injecting forced verification step\n")
+	elapsed := time.Since(startTime)
+	remainingSec := 900 - int(elapsed.Seconds())
+	if aiMetrics != nil && aiMetrics.ToolUseCount > 0 && ctx.Err() == nil && remainingSec > 30 {
+		log.Printf("[wove-bench] injecting forced verification step (%.0fs elapsed, %ds remaining)\n", elapsed.Seconds(), remainingSec)
 		verifyMsg := &uctypes.AIMessage{
 			MessageId: uuid.New().String(),
 			Parts: []uctypes.AIMessagePart{
-				{Type: uctypes.AIMessagePartTypeText, Text: `VERIFICATION REQUIRED before finishing.
+				{Type: uctypes.AIMessagePartTypeText, Text: `VERIFICATION REQUIRED — do NOT stop until you complete ALL steps.
 
-Step 1: Check if tests exist: ls /tests/ 2>/dev/null
+Step 1: Re-read your OUTPUT file(s) — cat the actual file content, do NOT rely on memory.
 
-Step 2a: If /tests/ exists, run: bash /tests/test.sh 2>&1 || pytest /tests/ -x 2>&1
-  - If tests fail, fix and re-run until they pass.
+Step 2: Re-read the original task instruction (scroll up). Compare your output with EVERY requirement:
+  - Does the file format match exactly? (CSV columns, JSON keys, exact strings)
+  - Does the content answer the RIGHT question? (not a similar question)
+  - Are all required files present at the correct paths?
 
-Step 2b: If /tests/ does NOT exist, verify manually:
-  - Re-read the original task instruction
-  - Check all required files exist at expected paths
-  - Run your solution and verify the output is correct
-  - Fix any issues you find
+Step 3: If tests exist (ls /tests/ 2>/dev/null), run them:
+  bash /tests/test.sh 2>&1 || pytest /tests/ -x 2>&1
+  If tests fail — fix and re-run.
 
-Do NOT skip verification.`},
+Step 4: If tests do NOT exist, run your own sanity check:
+  - Execute your solution and verify output makes sense
+  - If the task asked for a specific value, double-check your source data
+
+IMPORTANT: If you find ANY mismatch, fix it NOW. An incorrect answer costs the entire reward.`},
 			},
 		}
 		convertedVerify, verifyErr := backend.ConvertAIMessageToNativeChatMessage(*verifyMsg)
@@ -1641,6 +1667,29 @@ If repeating the same action more than twice:
 - STOP IMMEDIATELY
 - Run: git checkout . to reset
 - Try a COMPLETELY different approach — not a variation, a DIFFERENT strategy
+
+## Protect Working Solutions
+Before trying a DIFFERENT approach, ALWAYS backup your current best:
+- cp /app/out.html /app/out.html.best (or whatever the output file is)
+- If the new approach fails, restore: cp /app/out.html.best /app/out.html
+- NEVER overwrite a passing solution without a backup. Going from "works" to "broken" loses the whole reward.
+
+## Empty Output = Test Did Not Run
+If a test/verification command produces NO output (or only your echo), it means the test CRASHED or is MISSING a dependency — NOT that it passed. Treat empty output as FAILURE and investigate why the test didn't run (missing library? wrong path? syntax error?).
+
+## Escalate to Web Search
+If your approach has failed 2-3 times on the same problem:
+1. STOP coding more variations
+2. web_search for techniques, known solutions, or reference implementations
+3. Study the results, then try a fundamentally different approach
+Do not brute-force 50 variations from memory when the answer exists online.
+
+## Know When to Stop Iterating
+After 15+ tool calls on the same sub-problem without progress:
+1. recall_notes to check if you already found something useful
+2. Write your CURRENT BEST solution to the output file
+3. Move on to verification or a completely different strategy
+Diminishing returns kick in fast — your 20th attempt is rarely better than your 5th.
 
 ## Write Early, Verify Often
 - Write a plausible solution EARLY (even if incomplete). Overwrite it later as you learn more.
@@ -2709,16 +2758,29 @@ func makeWebSearchTool() func(any) (string, error) {
 		}
 		log.Printf("[tool:web_search] %s\n", query)
 
+		// Use MiniMax Token Plan search API (free, no extra keys).
+		// Falls back to DuckDuckGo Lite if MiniMax fails.
+		apiKey := os.Getenv("WOVE_BENCH_API_KEY")
+		if apiKey == "" {
+			apiKey = os.Getenv("MINIMAX_API_KEY")
+		}
+		if apiKey != "" {
+			result, err := minimaxWebSearch(apiKey, query)
+			if err == nil && result != "" {
+				return result, nil
+			}
+			log.Printf("[tool:web_search] MiniMax search failed: %v, falling back to DDG\n", err)
+		}
+
+		// Fallback: DuckDuckGo Lite
 		searchURL := "https://lite.duckduckgo.com/lite/?q=" + strings.ReplaceAll(query, " ", "+")
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-
 		cmd := exec.CommandContext(ctx, "curl", "-sL", "-A", "Mozilla/5.0", "-k", searchURL)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			return "", fmt.Errorf("search failed: %v", err)
 		}
-
 		result := stripHTMLTags(string(output))
 		if len(result) > 8000 {
 			result = result[:8000] + "\n... [truncated]"
@@ -2728,6 +2790,63 @@ func makeWebSearchTool() func(any) (string, error) {
 		}
 		return result, nil
 	}
+}
+
+// minimaxWebSearch uses the MiniMax Token Plan search API.
+// POST https://api.minimax.io/v1/coding_plan/search with Bearer token.
+func minimaxWebSearch(apiKey, query string) (string, error) {
+	body := fmt.Sprintf(`{"q":%q}`, query)
+	req, err := http.NewRequest("POST", "https://api.minimax.io/v1/coding_plan/search", strings.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("MM-API-Source", "Minimax-MCP")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	var data struct {
+		Organic []struct {
+			Title   string `json:"title"`
+			Link    string `json:"link"`
+			Snippet string `json:"snippet"`
+		} `json:"organic"`
+	}
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return "", fmt.Errorf("parse error: %w", err)
+	}
+
+	if len(data.Organic) == 0 {
+		return "", fmt.Errorf("no results")
+	}
+
+	var sb strings.Builder
+	for i, r := range data.Organic {
+		if i >= 7 {
+			break
+		}
+		sb.WriteString(fmt.Sprintf("- [%s](%s)\n", r.Title, r.Link))
+		if r.Snippet != "" {
+			sb.WriteString(fmt.Sprintf("  %s\n\n", r.Snippet))
+		}
+	}
+
+	result := sb.String()
+	if len(result) > 8000 {
+		result = result[:8000] + "\n... [truncated]"
+	}
+	return result, nil
 }
 
 func makeWebFetchTool() func(any) (string, error) {
@@ -2957,6 +3076,171 @@ func buildLocalContext(cwd string) string {
 	result := sb.String()
 	if len(result) > 12000 {
 		result = result[:12000] + "\n... [truncated]"
+	}
+	return result
+}
+
+// buildWebResearchContext performs pre-flight web research on the task
+// instruction. Extracts a search query from the instruction, runs DuckDuckGo
+// search, fetches the top 2 result URLs, and returns a compact context string.
+// This gives the agent technique references (XSS bypasses, algorithm
+// implementations, API docs) without spending tool calls during execution.
+func buildWebResearchContext(instruction string) string {
+	// Extract a search-friendly query from the task instruction.
+	// Strip file paths (/app/...), boilerplate, and keep technical keywords.
+	query := instruction
+
+	// Remove file paths that confuse search engines
+	pathRe := regexp.MustCompile(`/[a-zA-Z0-9_./\-]+`)
+	query = pathRe.ReplaceAllString(query, "")
+
+	// Strip boilerplate prefixes
+	for _, prefix := range []string{
+		"Your task is to ", "You are given ", "There's a ", "There is a ",
+	} {
+		if idx := strings.Index(query, prefix); idx >= 0 && idx < 80 {
+			query = query[idx+len(prefix):]
+			break
+		}
+	}
+
+	// Remove lines that are just requirements/formatting
+	var keyLines []string
+	for _, line := range strings.Split(query, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "-") || strings.HasPrefix(line, "Usage:") || strings.HasPrefix(line, "Requirements:") {
+			continue
+		}
+		keyLines = append(keyLines, line)
+		if len(keyLines) >= 3 {
+			break
+		}
+	}
+	query = strings.Join(keyLines, " ")
+
+	// Trim to ~150 chars
+	if len(query) > 150 {
+		query = query[:150]
+	}
+	query = strings.TrimSpace(query)
+
+	// Prepend "how to" if query looks like a task description
+	if len(query) > 20 && !strings.HasPrefix(strings.ToLower(query), "how") {
+		query = "how to " + query
+	}
+
+	if len(query) < 10 {
+		return ""
+	}
+
+	log.Printf("[web-research] query: %s\n", query[:min(80, len(query))])
+
+	// Search via DuckDuckGo Lite — URL-encode query to handle /app paths,
+	// special chars, quotes etc. that break curl.
+	import_url := func(q string) string {
+		var sb strings.Builder
+		for _, c := range []byte(q) {
+			if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~' {
+				sb.WriteByte(c)
+			} else if c == ' ' {
+				sb.WriteByte('+')
+			} else {
+				fmt.Fprintf(&sb, "%%%02X", c)
+			}
+		}
+		return sb.String()
+	}
+	searchURL := "https://lite.duckduckgo.com/lite/?q=" + import_url(query)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "curl", "-sL", "-A", "Mozilla/5.0", "-k", searchURL)
+	searchOutput, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("[web-research] search failed: %v\n", err)
+		return ""
+	}
+
+	// Extract URLs from DuckDuckGo results (href="...") — pick non-DDG URLs
+	urlRe := regexp.MustCompile(`href="(https?://[^"]+)"`)
+	matches := urlRe.FindAllStringSubmatch(string(searchOutput), -1)
+	var urls []string
+	seen := make(map[string]bool)
+	skipDomains := []string{"duckduckgo.com", "duck.co", "google.com", "bing.com"}
+	for _, m := range matches {
+		u := m[1]
+		skip := false
+		for _, d := range skipDomains {
+			if strings.Contains(u, d) {
+				skip = true
+				break
+			}
+		}
+		if skip || seen[u] {
+			continue
+		}
+		seen[u] = true
+		urls = append(urls, u)
+		if len(urls) >= 3 {
+			break
+		}
+	}
+
+	if len(urls) == 0 {
+		// Fallback: use stripped text from search results
+		stripped := stripHTMLTags(string(searchOutput))
+		if len(stripped) > 4000 {
+			stripped = stripped[:4000]
+		}
+		if len(stripped) > 100 {
+			return "Search results (no fetchable URLs):\n" + stripped
+		}
+		return ""
+	}
+
+	log.Printf("[web-research] found %d URLs, fetching top 2\n", len(urls))
+
+	// Fetch top 2 URLs
+	var sb strings.Builder
+	fetched := 0
+	for _, u := range urls {
+		if fetched >= 2 {
+			break
+		}
+		fctx, fcancel := context.WithTimeout(context.Background(), 15*time.Second)
+		fcmd := exec.CommandContext(fctx, "curl", "-sL", "-A", "Mozilla/5.0", "--max-time", "12", "-k", u)
+		fout, ferr := fcmd.CombinedOutput()
+		fcancel()
+		if ferr != nil {
+			continue
+		}
+		content := string(fout)
+		if len(content) > 500 && (strings.Contains(content[:500], "<html") || strings.Contains(content[:500], "<!DOCTYPE")) {
+			content = stripHTMLTags(content)
+		}
+		// Trim to ~3KB per page
+		if len(content) > 3000 {
+			content = content[:3000] + "\n... [truncated]"
+		}
+		if len(content) < 50 {
+			continue
+		}
+		sb.WriteString(fmt.Sprintf("--- %s ---\n", u))
+		sb.WriteString(content)
+		sb.WriteString("\n\n")
+		fetched++
+	}
+
+	// Append remaining URLs as references
+	for i, u := range urls {
+		if i < 2 {
+			continue
+		}
+		sb.WriteString(fmt.Sprintf("See also: %s\n", u))
+	}
+
+	result := sb.String()
+	if len(result) > 8000 {
+		result = result[:8000] + "\n... [truncated]"
 	}
 	return result
 }

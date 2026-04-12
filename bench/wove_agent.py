@@ -104,6 +104,97 @@ class WoveAgent(BaseAgent):
         result = await environment.exec(f"{WOVE_BENCH_BINARY} --help", timeout_sec=10)
         self.logger.info(f"wove-bench installed, help output: {result.stdout[:100]}")
 
+    def _web_research(self, instruction: str) -> str:
+        """Pre-flight web research using MiniMax Token Plan search API.
+
+        Uses POST https://api.minimax.io/v1/coding_plan/search — free with our
+        Token Plan key, no extra API keys needed. Returns a <web_research_context>
+        block with search results + top page content via Jina Reader.
+        """
+        import re
+        import json
+        import urllib.request
+        import urllib.error
+
+        # Get API key
+        api_key = os.environ.get("MINIMAX_API_KEY", "")
+        if not api_key:
+            env_file = Path(__file__).parent.parent / ".env"
+            if env_file.exists():
+                for line in env_file.read_text().splitlines():
+                    if line.startswith("MINIMAX_API_KEY="):
+                        api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
+                        break
+        if not api_key:
+            return ""
+
+        # Extract search query: strip file paths, boilerplate, keep technical terms
+        query = re.sub(r'/[a-zA-Z0-9_./\-]+', '', instruction)
+        for prefix in ["Your task is to ", "You are given ", "There's a ", "There is a "]:
+            idx = query.find(prefix)
+            if 0 <= idx < 80:
+                query = query[idx + len(prefix):]
+                break
+        lines = [ln.strip() for ln in query.split('\n')
+                 if ln.strip() and not ln.strip().startswith('-')
+                 and not ln.strip().startswith('Usage:')
+                 and not ln.strip().startswith('Requirements:')]
+        query = ' '.join(lines[:3])[:150].strip()
+        if len(query) < 15:
+            return ""
+        if not query.lower().startswith("how"):
+            query = "how to " + query
+
+        self.logger.info(f"Web research query: {query[:80]}")
+
+        # MiniMax Token Plan search API
+        try:
+            payload = json.dumps({"q": query}).encode("utf-8")
+            req = urllib.request.Request(
+                "https://api.minimax.io/v1/coding_plan/search",
+                data=payload,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                    "MM-API-Source": "Minimax-MCP",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except Exception as e:
+            self.logger.warning(f"MiniMax search failed: {e}")
+            return ""
+
+        results = data.get("organic", [])
+        if not results:
+            return ""
+
+        # Build context: titles + URLs + snippets
+        parts = []
+        for r in results[:7]:
+            title = r.get("title", "")
+            link = r.get("link", "")
+            snippet = r.get("snippet", "")
+            if not link:
+                continue
+            entry = f"- [{title}]({link})"
+            if snippet:
+                entry += f"\n  {snippet[:300]}"
+            parts.append(entry)
+
+        if not parts:
+            return ""
+
+        ctx = "\n\n<web_research_context>\nSearch results for: " + query + "\n\n"
+        ctx += "\n".join(parts)
+        ctx += "\n</web_research_context>\n\nThe above shows web research relevant to your task. Use these references, techniques, and URLs to solve the task faster. You can web_fetch any URL above for full content, or web_search for more."
+
+        if len(ctx) > 8000:
+            ctx = ctx[:8000] + "\n... [truncated]\n</web_research_context>"
+
+        return ctx
+
     async def _preinstall_runtimes(self, instruction: str, environment: BaseEnvironment) -> None:
         """Pre-install language runtimes hinted at in the task instruction.
 
@@ -146,6 +237,11 @@ class WoveAgent(BaseAgent):
             ("php", [
                 " in php", "php ", "composer install", "composer.json",
                 "phpunit",
+            ]),
+            ("python3 python3-pip", [
+                "pytorch", "torch.", "import torch",
+                "numpy", "pandas", "scipy", "scikit",
+                "tensorflow", "keras",
             ]),
         ]
 
@@ -228,6 +324,23 @@ class WoveAgent(BaseAgent):
         # already pulled in setup() or pre-baked into the harbor task images.
         await self._preinstall_runtimes(instruction, environment)
 
+        # --- Ensure python3 is available ---
+        # Many containers lack python3 entirely (verifier installs it separately
+        # via uv). Agent wastes 14+ calls searching. Fix: install if missing.
+        py_check = await environment.exec(
+            "which python3 >/dev/null 2>&1 && echo OK || echo MISSING",
+            timeout_sec=5,
+        )
+        if "MISSING" in (py_check.stdout or ""):
+            self.logger.info("python3 missing — installing via apt")
+            await environment.exec(
+                "DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 && "
+                "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 python3-pip >/dev/null 2>&1 && "
+                "which python3 && echo INSTALLED || echo FAILED",
+                user="root",
+                timeout_sec=120,
+            )
+
         # --- Cross-task error memory: DISABLED ---
         # Hints from failed tasks were contaminating unrelated subsequent tasks.
         # Set WOVE_ENABLE_ERROR_MEMORY=1 to re-enable.
@@ -240,8 +353,19 @@ class WoveAgent(BaseAgent):
                 + "\n".join(error_lines) + "\n</previous_task_errors>"
             )
 
+        # --- Pre-flight web research ---
+        # Search for techniques/references relevant to the task before the agent
+        # starts. Injects results as <web_research_context> so the agent has
+        # algorithm implementations, bypass techniques, API docs from the start
+        # without spending tool calls on web_search during execution.
+        web_research = ""
+        if not os.environ.get("WOVE_NO_WEB"):
+            web_research = self._web_research(instruction)
+            if web_research:
+                self.logger.info(f"Injected {len(web_research)} bytes of web research context")
+
         # Build command
-        full_instruction = instruction + error_hints
+        full_instruction = instruction + error_hints + web_research
         cmd_parts = [
             WOVE_BENCH_BINARY,
             "--model", shlex.quote(model_name),
