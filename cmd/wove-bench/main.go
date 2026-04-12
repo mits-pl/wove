@@ -174,8 +174,11 @@ type enforcementState struct {
 	recentToolCalls  []string
 	keyEvents        []string
 
-	// User message injection
-	injectUserMsg    func(string)
+	// Pending messages: queued during tool callbacks, delivered AFTER RunAIChat.
+	// Direct chatstore inject inside tool callbacks breaks Anthropic message
+	// ordering (tool_use → user_msg → tool_result = error 2013).
+	pendingMessages  []string
+	injectUserMsg    func(string) // delivers to chatstore (safe only between RunAIChat calls)
 
 	// Track if web research was already done (by agent or advisor)
 	webResearchDone  bool
@@ -765,21 +768,16 @@ func (es *enforcementState) nudgeFromAdvisor() string {
 	apiKey := es.advisorAPIKey
 	es.mu.Unlock()
 
-	// Consume pending advice. Critical advice (REDIRECT with fetched docs,
-	// or test failure diagnosis) delivers immediately — no observation phase
-	// delay. Soft "OK" advice is discarded.
+	// Queue pending advice for delivery AFTER RunAIChat (not inside tool callback).
+	// Direct chatstore inject here breaks Anthropic message ordering (error 2013).
 	if pending != "" {
-		// During observation phase, only deliver if it's a REDIRECT (not OK)
 		isCritical := !strings.Contains(strings.ToUpper(pending), "OK") && len(pending) > 50
 		if callCount >= minCall || isCritical {
 			es.mu.Lock()
 			es.pendingAdvice = ""
-			injectFn := es.injectUserMsg
+			es.pendingMessages = append(es.pendingMessages, pending)
 			es.mu.Unlock()
-			if injectFn != nil {
-				injectFn(pending)
-				log.Printf("[advisor] injected user message (call %d, critical=%v)\n", callCount, isCritical)
-			}
+			log.Printf("[advisor] queued message (call %d, critical=%v)\n", callCount, isCritical)
 			return ""
 		}
 	}
@@ -1596,13 +1594,10 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 
 			// Heuristic advisor: deterministic pattern checks. Gated by minCall.
 			if heuristicNudge := enforce.heuristicAdvisor(); heuristicNudge != "" {
-				log.Printf("[heuristic-advisor] INJECTING USER MESSAGE at call %d\n", enforce.toolCallCount)
+				log.Printf("[heuristic-advisor] queued message at call %d\n", enforce.toolCallCount)
 				enforce.mu.Lock()
-				injectFn := enforce.injectUserMsg
+				enforce.pendingMessages = append(enforce.pendingMessages, heuristicNudge)
 				enforce.mu.Unlock()
-				if injectFn != nil {
-					injectFn(heuristicNudge)
-				}
 			}
 
 			// LLM Advisor: every N calls, ask MiniMax to review trace.
@@ -1875,8 +1870,32 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 		}
 	}
 
+	// --- Deliver queued messages from heuristic/advisor ---
+	// These were collected during tool callbacks but couldn't be injected
+	// there (would break Anthropic tool_use → tool_result ordering).
+	// Deliver now, between RunAIChat calls, where ordering is clean.
+	enforce.mu.Lock()
+	pendingMsgs := make([]string, len(enforce.pendingMessages))
+	copy(pendingMsgs, enforce.pendingMessages)
+	enforce.pendingMessages = nil
+	enforce.mu.Unlock()
+	if len(pendingMsgs) > 0 && ctx.Err() == nil {
+		// Combine all pending into one message (avoid spamming)
+		combined := strings.Join(pendingMsgs, "\n\n---\n\n")
+		log.Printf("[deliver] injecting %d queued messages (%d bytes)\n", len(pendingMsgs), len(combined))
+		enforce.injectUserMsg(combined)
+		// Give agent a chance to act on the messages
+		nudgeMetrics, nudgeErr := aiusechat.RunAIChat(ctx, sseHandler, backend, chatOpts)
+		if nudgeErr == nil && nudgeMetrics != nil {
+			aiMetrics.Usage.InputTokens += nudgeMetrics.Usage.InputTokens
+			aiMetrics.Usage.OutputTokens += nudgeMetrics.Usage.OutputTokens
+			aiMetrics.ToolUseCount += nudgeMetrics.ToolUseCount
+			aiMetrics.RequestCount += nudgeMetrics.RequestCount
+		}
+	}
+
 	// --- Advisor code review loop before verifier ---
-	// Senior dev reviews output, agent fixes, repeat until OK or max 2 rounds.
+	// Senior dev reviews output, agent fixes, repeat until OK or timeout.
 	for reviewRound := 0; ; reviewRound++ {
 		elapsed := time.Since(startTime)
 		remainingSec := 900 - int(elapsed.Seconds())
@@ -1921,18 +1940,86 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 			instrSnippet = instrSnippet[:500]
 		}
 
-		// 2. Send to MiniMax advisor for review
+		// 1.5. Run tests to give advisor real verification data.
+		// /tests/ may not exist during agent run (verifier mounts it later).
+		// So we also replay the agent's own test commands from the trace.
+		var testResults string
+
+		// Strategy 1: Try verifier tests (may not exist)
+		for _, testCmd := range []string{
+			"cd " + cfg.CWD + " && bash /tests/test.sh 2>&1",
+			"cd " + cfg.CWD + " && python3 -m pytest /tests/ -x --tb=short 2>&1",
+		} {
+			tCtx, tCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			tCmd := exec.CommandContext(tCtx, "bash", "-c", testCmd)
+			tOut, _ := tCmd.CombinedOutput()
+			tCancel()
+			result := strings.TrimSpace(string(tOut))
+			if len(result) > 50 && !strings.Contains(result, "No such file") {
+				if len(result) > 1000 {
+					result = result[len(result)-1000:]
+				}
+				testResults = fmt.Sprintf("VERIFIER TEST:\n%s\n", result)
+				break
+			}
+		}
+
+		// Strategy 2: Replay agent's last test-like bash command from trace
+		if testResults == "" && tracer != nil {
+			enforce.mu.Lock()
+			recentCalls := make([]string, len(enforce.recentToolCalls))
+			copy(recentCalls, enforce.recentToolCalls)
+			enforce.mu.Unlock()
+
+			// Find last bash command that looks like a test (diff, pytest, test, verify)
+			var lastTestCmd string
+			for i := len(recentCalls) - 1; i >= 0; i-- {
+				tc := recentCalls[i]
+				if strings.HasPrefix(tc, "bash:") {
+					cmd := tc[5:]
+					if strings.Contains(cmd, "diff") || strings.Contains(cmd, "test") ||
+						strings.Contains(cmd, "verify") || strings.Contains(cmd, "decomp") ||
+						strings.Contains(cmd, "assert") || strings.Contains(cmd, "check") {
+						lastTestCmd = strings.TrimSpace(cmd)
+						break
+					}
+				}
+			}
+			if lastTestCmd != "" {
+				tCtx, tCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				tCmd := exec.CommandContext(tCtx, "bash", "-c", "cd "+cfg.CWD+" && "+lastTestCmd)
+				tOut, tErr := tCmd.CombinedOutput()
+				tCancel()
+				result := strings.TrimSpace(string(tOut))
+				if len(result) > 1000 {
+					result = result[len(result)-1000:]
+				}
+				status := "PASS"
+				if tErr != nil {
+					status = "FAIL"
+				}
+				testResults = fmt.Sprintf("REPLAYED AGENT TEST: %s\nSTATUS: %s\nOUTPUT:\n%s\n", lastTestCmd, status, result)
+			}
+		}
+
+		if testResults == "" {
+			testResults = "NO TESTS AVAILABLE — review based on files only."
+		}
+		log.Printf("[advisor-review] test results (%d bytes): %s\n", len(testResults), testResults[:min(200, len(testResults))])
+
+		// 2. Send to MiniMax advisor for review (with test results)
 		reviewPrompt := fmt.Sprintf(
 			"You are a senior developer doing a FINAL CODE REVIEW before submission.\n\n"+
 				"TASK:\n%s\n\n"+
-				"AGENT'S OUTPUT:\n%s\n\n"+
-				"Review the output against EVERY task requirement. Check:\n"+
-				"- Are all required files present?\n"+
-				"- Does the content match what was asked? (right format, right data, right answer)\n"+
-				"- Any obvious bugs, wrong values, missing pieces?\n\n"+
+				"AGENT'S OUTPUT FILES:\n%s\n\n"+
+				"TEST RESULTS:\n%s\n\n"+
+				"Review the output against EVERY task requirement:\n"+
+				"- If tests FAILED: explain what failed and how to fix it\n"+
+				"- If tests PASSED: say OK\n"+
+				"- If no tests available: check files manually (format, content, completeness)\n\n"+
 				"If CORRECT: respond with just OK\n"+
-				"If WRONG: explain exactly what's wrong and how to fix it (be specific — file names, expected values, exact errors)",
-			instrSnippet, outputContent.String())
+				"If WRONG: explain exactly what's wrong and how to fix it",
+			instrSnippet, outputContent.String(), testResults)
 
 		apiKey := enforce.advisorAPIKey
 		advisorEndpoint := enforce.advisorEndpoint
@@ -1968,7 +2055,7 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 
 						if review != "" && !strings.HasPrefix(strings.ToUpper(review), "OK") && len(review) > 10 {
 							// Advisor found issues — save to notes + give agent a chance to fix
-							log.Printf("[advisor-review] ISSUES FOUND: %s\n", review[:min(150, len(review))])
+							log.Printf("[advisor-review] ISSUES FOUND (%d bytes):\n%s\n", len(review), review)
 							notes.record("review_issues", review)
 							fixMsg := &uctypes.AIMessage{
 								MessageId: uuid.New().String(),
@@ -1984,7 +2071,9 @@ func runAgent(ctx context.Context, cfg agentConfig) BenchMetrics {
 								_ = chatstore.DefaultChatStore.PostMessage(chatOpts.ChatId, &chatOpts.Config, convertedFix)
 								fixMetrics, fixErr := aiusechat.RunAIChat(ctx, sseHandler, backend, chatOpts)
 								if fixErr != nil {
-									log.Printf("[advisor-review] fix error: %v\n", fixErr)
+									log.Printf("[advisor-review] fix error (breaking loop): %v\n", fixErr)
+									reviewCancel()
+									break
 								}
 								if fixMetrics != nil {
 									aiMetrics.Usage.InputTokens += fixMetrics.Usage.InputTokens
